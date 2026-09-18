@@ -30,6 +30,17 @@ export function formatDate(dateString: string): string {
 }
 
 /**
+ * Returns today's date as a local ISO day string (YYYY-MM-DD).
+ * Uses local time deliberately so a late-evening entry is not dated tomorrow.
+ */
+export function todayIso(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/**
  * Returns a human-friendly relative label when applicable.
  */
 export function getRelativeDateLabel(dateString: string): string {

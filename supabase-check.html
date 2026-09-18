@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Supabase Connection Check (dev only)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        line-height: 1.6;
+      }
+      main { max-width: 84ch; margin: 0 auto; }
+      h1 { font-size: 1.15rem; margin: 0 0 0.25rem; }
+      p.sub { margin: 0 0 1.25rem; color: #94a3b8; font-size: 0.85rem; }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #020617;
+        border: 1px solid #1e293b;
+        border-radius: 10px;
+        padding: 1rem;
+        font-size: 0.85rem;
+      }
+      pre[data-status='pass'] { border-color: #10b981; }
+      pre[data-status='warn'] { border-color: #f59e0b; }
+      pre[data-status='fail'] { border-color: #ef4444; }
+      button {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.5rem 0.9rem;
+        border-radius: 8px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #e2e8f0;
+        cursor: pointer;
+      }
+      button:hover { background: #334155; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Supabase connection check</h1>
+      <p class="sub">
+        Development diagnostic. Read-only: it performs zero-row reads and never
+        writes. Not part of the app bundle &mdash; <code>vite build</code> only
+        compiles <code>index.html</code>. Credential values are never displayed.
+      </p>
+      <pre id="output">Running checks&hellip;</pre>
+      <button id="rerun" type="button">Re-run checks</button>
+    </main>
+    <script type="module" src="/src/dev/supabaseCheck.ts"></script>
+  </body>
+</html>

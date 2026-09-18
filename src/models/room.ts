@@ -1,9 +1,6 @@
 /**
  * Domain types for the Supabase-backed shared room fund.
  *
- * These are intentionally separate from `src/models/expense.ts` so the existing
- * local-first UI keeps compiling untouched.
- *
  * All money is integer minor units ("cents"). Never use floats for money:
  * splitting or summing floats accumulates rounding drift.
  */

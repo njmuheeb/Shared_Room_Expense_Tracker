@@ -1,54 +1,86 @@
 import React from 'react';
-import { ConfirmModal } from './components/common/ConfirmModal';
-import { CategoryBreakdown } from './components/dashboard/CategoryBreakdown';
-import { MetricCards } from './components/dashboard/MetricCards';
-import { ExpenseFilters } from './components/expense/ExpenseFilters';
-import { ExpenseList } from './components/expense/ExpenseList';
-import { ExpenseModal } from './components/expense/ExpenseModal';
-import { Navbar } from './components/layout/Navbar';
-import { ExpenseProvider } from './context/ExpenseContext';
+import { AuthScreen } from './components/auth/AuthScreen';
+import { ResetPasswordScreen } from './components/auth/ResetPasswordScreen';
+import { FullPageLoader } from './components/common/FullPageLoader';
+import { AppHeader } from './components/layout/AppHeader';
+import { RoomApp } from './components/room/RoomApp';
+import { useSession } from './hooks/useSession';
 
-const AppContent: React.FC = () => {
+/**
+ * Authentication-first application shell.
+ *
+ * - Checking session      → loading state
+ * - No session            → log in / sign up (password, or magic link)
+ * - Password recovery     → set a new password
+ * - Session, no room      → create / join onboarding
+ * - Session with room     → shared room dashboard
+ *
+ * The shared-room UI only mounts for an authenticated user, so a signed-out
+ * visitor can never see another user's room or financial data.
+ */
+const App: React.FC = () => {
+  const {
+    session,
+    loading,
+    error,
+    recoveryMode,
+    signInWithPassword,
+    signUp,
+    sendMagicLink,
+    sendPasswordReset,
+    completePasswordReset,
+    signOut,
+  } = useSession();
+
+  if (loading) {
+    return (
+      <div className="app-layout">
+        <FullPageLoader message="Checking your session…" fullScreen />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <AuthScreen
+        serverError={error}
+        onPasswordLogin={signInWithPassword}
+        onSignUp={signUp}
+        onMagicLink={sendMagicLink}
+        onPasswordReset={sendPasswordReset}
+      />
+    );
+  }
+
+  if (recoveryMode) {
+    return (
+      <div className="app-layout">
+        <main className="main-content">
+          <ResetPasswordScreen
+            onSubmit={completePasswordReset}
+            onCancel={() => void signOut()}
+            serverError={error}
+          />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app-layout">
-      {/* Top App Navbar */}
-      <Navbar />
+      <AppHeader email={session.user.email ?? 'Signed in'} onSignOut={signOut} />
 
-      {/* Main Dashboard Views */}
       <main className="main-content">
-        {/* 1. Overview Analytics */}
-        <MetricCards />
-
-        {/* 2. Category Spending Breakdown */}
-        <CategoryBreakdown />
-
-        {/* 3. Search & Filters */}
-        <ExpenseFilters />
-
-        {/* 4. Filtered Expense List / History */}
-        <ExpenseList />
+        <RoomApp session={session} />
       </main>
 
-      {/* Modal Dialogs */}
-      <ExpenseModal />
-      <ConfirmModal />
-
-      {/* Footer */}
       <footer className="app-footer">
         <p>
-          <strong>ExpenFlow</strong> — 100% Client-Side &amp; Local-First Personal Expense Tracker.
-          Data is stored locally in your browser.
+          <strong>RoomFund</strong> — shared room expense tracker. Access is
+          enforced per-room with Supabase Row Level Security.
         </p>
       </footer>
     </div>
-  );
-};
-
-export const App: React.FC = () => {
-  return (
-    <ExpenseProvider>
-      <AppContent />
-    </ExpenseProvider>
   );
 };
 
