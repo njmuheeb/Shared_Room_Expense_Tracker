@@ -147,20 +147,20 @@ Sensitive credentials and secret keys are not included in the source code or pub
 
 ## 🚀 Run Locally
 
-### 1. Clone the repository
-
 ```bash
+1. Clone the repository
+
 git clone https://github.com/njmuheeb/Shared_Room_Expense_Tracker.git
 
-### 2. Open the project
+2. Open the project
 
 cd Shared_Room_Expense_Tracker
 
-### 3. Install dependencies
+3. Install dependencies
 
 npm install
 
-### 4. Configure environment variables
+4. Configure environment variables
 
 Create a .env file in the project root:
 
@@ -169,14 +169,14 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 Do not add your .env file or Supabase service-role key to the GitHub repository.
 
-### 5. Start the development server
+5. Start the development server
 npm run dev
 
 The application will normally be available at:
 
 http://localhost:5173
 
-### ⚠️ One thing to check
+⚠️ One thing to check
 
 Make sure this GitHub URL is actually your repository:
 
@@ -187,8 +187,9 @@ If your repository has a different name, replace that URL with your actual repos
 
 Then press Ctrl + S.
 
+```
 
-## 🌐 Deployment
+### 🌐 Deployment
 
 The application is deployed using **Cloudflare Workers**.
 
@@ -214,7 +215,7 @@ Cloudflare Build & Deployment
       ↓
 Live Application
 
-
+```
 ## 🔮 Future Improvements
 
 Some features planned for future versions include:
@@ -234,7 +235,7 @@ Some features planned for future versions include:
 
 ## 📌 Project Status
 
-🟢 **Active Development**
+🟢 Active Development
 
 The core functionality of the Shared Room Expense Tracker is implemented, including:
 
@@ -251,7 +252,7 @@ The core functionality of the Shared Room Expense Tracker is implemented, includ
 The project is still open for improvements and additional features.
 
 
-## 👨‍💻 Author
+👨‍💻 Author
 
 **Muheeb Mushtaq**
 
