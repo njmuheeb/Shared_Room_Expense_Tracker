@@ -16,7 +16,7 @@ import type {
 export async function createRoom(
   name: string,
   displayName: string,
-  currency = '$'
+  currency = 'INR'
 ): Promise<string> {
   const { data, error } = await supabase.rpc('create_room', {
     p_name: name,

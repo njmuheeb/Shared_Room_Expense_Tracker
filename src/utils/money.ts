@@ -1,4 +1,4 @@
-import { formatCurrency } from './formatters';
+import { CURRENCY_CODE, formatCurrency } from './formatters';
 
 /**
  * Money helpers for the shared-room fund.
@@ -18,7 +18,7 @@ export function toMajorUnits(cents: number): number {
   return Math.round(cents) / 100;
 }
 
-/** Formats integer cents using the room's currency symbol. */
-export function formatCents(cents: number, currencySymbol = '$'): string {
-  return formatCurrency(toMajorUnits(cents), currencySymbol);
+/** Formats integer cents as Indian Rupees (₹). */
+export function formatCents(cents: number, currencyCode = CURRENCY_CODE): string {
+  return formatCurrency(toMajorUnits(cents), currencyCode);
 }

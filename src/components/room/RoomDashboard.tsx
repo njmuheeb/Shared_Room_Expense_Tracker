@@ -6,7 +6,7 @@ import type {
   RoomMember,
 } from '../../models/room';
 import { formatCents } from '../../utils/money';
-import { formatDate } from '../../utils/formatters';
+import { CURRENCY_SYMBOL, formatDate } from '../../utils/formatters';
 import { ContributionForm, ExpenseForm } from './RoomForms';
 import type { ContributionInput, ExpenseInput } from './RoomForms';
 
@@ -44,7 +44,6 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   const [tab, setTab] = useState<Tab>('overview');
 
   const isAdmin = currentMember?.role === 'admin';
-  const currency = room.currency;
 
   const memberById = useMemo(() => {
     const map = new Map<string, RoomMember>();
@@ -66,17 +65,17 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
         <div className="room-metric">
           <span className="room-metric-label">Fund cash</span>
           <span className="room-metric-value">
-            {formatCents(balance?.fund_cash_cents ?? 0, currency)}
+            {formatCents(balance?.fund_cash_cents ?? 0)}
           </span>
           <span className="room-metric-hint">
-            {formatCents(balance?.total_contributions_cents ?? 0, currency)} contributed
+            {formatCents(balance?.total_contributions_cents ?? 0)} contributed
           </span>
         </div>
 
         <div className="room-metric">
           <span className="room-metric-label">Owed to members</span>
           <span className="room-metric-value">
-            {formatCents(pendingTotal, currency)}
+            {formatCents(pendingTotal)}
           </span>
           <span className="room-metric-hint">not yet reimbursed</span>
         </div>
@@ -84,7 +83,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
         <div className="room-metric room-metric--accent">
           <span className="room-metric-label">Available to spend</span>
           <span className="room-metric-value">
-            {formatCents(balance?.available_balance_cents ?? 0, currency)}
+            {formatCents(balance?.available_balance_cents ?? 0)}
           </span>
           <span className="room-metric-hint">fund cash − outstanding claims</span>
         </div>
@@ -93,7 +92,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
           <span className="room-metric-label">Members</span>
           <span className="room-metric-value">{members.length}</span>
           <span className="room-metric-hint">
-            {formatCents(balance?.total_reimbursed_cents ?? 0, currency)} reimbursed
+            {formatCents(balance?.total_reimbursed_cents ?? 0)} reimbursed
           </span>
         </div>
       </div>
@@ -145,7 +144,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
           members={members}
           currentMemberId={currentMember?.id ?? null}
           isAdmin={isAdmin}
-          currency={currency}
+          currency={CURRENCY_SYMBOL}
           busy={busy}
           onSubmit={onAddContribution}
         />
@@ -156,7 +155,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
           members={members}
           currentMemberId={currentMember?.id ?? null}
           isAdmin={isAdmin}
-          currency={currency}
+          currency={CURRENCY_SYMBOL}
           busy={busy}
           onSubmit={onAddExpense}
         />
@@ -227,7 +226,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                       </div>
 
                       <span className="room-expense-amount">
-                        {formatCents(expense.amount_cents, currency)}
+                        {formatCents(expense.amount_cents)}
                       </span>
 
                       <span className="room-expense-actions">

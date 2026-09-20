@@ -1,15 +1,29 @@
+/** Default currency for the whole app. */
+export const CURRENCY_CODE = 'INR';
+/** Locale that renders Indian digit grouping and the ₹ symbol. */
+export const CURRENCY_LOCALE = 'en-IN';
+/** Rupee sign, for compact labels such as form field captions. */
+export const CURRENCY_SYMBOL = '₹';
+
 /**
- * Formats a numeric amount with the chosen currency symbol and 2 decimals.
+ * Formats a numeric amount as Indian Rupees using the `en-IN` locale.
+ *
+ * Uses `Intl.NumberFormat` currency formatting, so grouping and the symbol
+ * follow Indian conventions: ₹0.00, ₹1,000.00, ₹1,00,000.00.
+ *
+ * `currencyCode` is an ISO 4217 code (e.g. "INR") and exists for callers that
+ * need a different currency; the app defaults to INR everywhere.
  */
-export function formatCurrency(amount: number, currencySymbol: string = '$'): string {
-  const absFormatted = new Intl.NumberFormat('en-US', {
+export function formatCurrency(
+  amount: number,
+  currencyCode: string = CURRENCY_CODE
+): string {
+  return new Intl.NumberFormat(CURRENCY_LOCALE, {
+    style: 'currency',
+    currency: currencyCode,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Math.abs(amount));
-
-  return amount < 0
-    ? `-${currencySymbol}${absFormatted}`
-    : `${currencySymbol}${absFormatted}`;
+  }).format(amount);
 }
 
 /**
