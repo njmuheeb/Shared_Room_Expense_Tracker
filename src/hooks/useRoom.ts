@@ -3,12 +3,14 @@ import {
   createRoom as createRoomRequest,
   getFundBalance,
   joinRoom as joinRoomRequest,
+  listAccountingPeriods,
   listExpenses,
   listMembers,
   listMyRooms,
   subscribeToRoom,
 } from '../services/roomService';
 import type {
+  AccountingPeriod,
   ExpenseWithReimbursement,
   Room,
   RoomFundBalance,
@@ -22,6 +24,8 @@ export interface UseRoomResult {
   members: RoomMember[];
   balance: RoomFundBalance | null;
   expenses: ExpenseWithReimbursement[];
+  periods: AccountingPeriod[];
+  activePeriod: AccountingPeriod | null;
   currentMember: RoomMember | null;
   /** True once the first room lookup has completed. Gates loading states. */
   initialized: boolean;
@@ -41,6 +45,7 @@ export interface UseRoomResult {
 const EMPTY_ROOMS: Room[] = [];
 const EMPTY_MEMBERS: RoomMember[] = [];
 const EMPTY_EXPENSES: ExpenseWithReimbursement[] = [];
+const EMPTY_PERIODS: AccountingPeriod[] = [];
 
 /** Turns any thrown value into a message a roommate can act on. */
 export function describeRoomError(err: unknown): string {
@@ -69,7 +74,7 @@ export function describeRoomError(err: unknown): string {
 
 /**
  * Owns everything about "the room I am in": the list of rooms the signed-in
- * user belongs to, the selected room's members/fund balance/expenses, and a
+ * user belongs to, the selected room's members/fund balance/expenses/periods, and a
  * debounced realtime subscription.
  *
  * Pass `userId = null` when signed out; the hook then stays idle.
@@ -80,6 +85,7 @@ export function useRoom(userId: string | null): UseRoomResult {
   const [membersState, setMembersState] = useState<RoomMember[]>([]);
   const [balanceState, setBalanceState] = useState<RoomFundBalance | null>(null);
   const [expensesState, setExpensesState] = useState<ExpenseWithReimbursement[]>([]);
+  const [periodsState, setPeriodsState] = useState<AccountingPeriod[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +96,7 @@ export function useRoom(userId: string | null): UseRoomResult {
   const members = activeRoomId ? membersState : EMPTY_MEMBERS;
   const balance = activeRoomId ? balanceState : null;
   const expenses = activeRoomId ? expensesState : EMPTY_EXPENSES;
+  const periods = activeRoomId ? periodsState : EMPTY_PERIODS;
 
   const loadRooms = useCallback(async () => {
     if (!userId) return;
@@ -120,14 +127,16 @@ export function useRoom(userId: string | null): UseRoomResult {
 
     setLoading(true);
     try {
-      const [memberList, fundBalance, expenseList] = await Promise.all([
+      const [memberList, fundBalance, expenseList, periodList] = await Promise.all([
         listMembers(activeRoomId),
         getFundBalance(activeRoomId),
         listExpenses(activeRoomId),
+        listAccountingPeriods(activeRoomId),
       ]);
       setMembersState(memberList);
       setBalanceState(fundBalance);
       setExpensesState(expenseList);
+      setPeriodsState(periodList);
       setError(null);
     } catch (err) {
       setError(describeRoomError(err));
@@ -162,6 +171,11 @@ export function useRoom(userId: string | null): UseRoomResult {
   const activeRoom = useMemo(
     () => rooms.find((room) => room.id === activeRoomId) ?? null,
     [rooms, activeRoomId]
+  );
+
+  const activePeriod = useMemo(
+    () => periods.find((p) => p.status === 'open') ?? null,
+    [periods]
   );
 
   const currentMember = useMemo(
@@ -206,6 +220,8 @@ export function useRoom(userId: string | null): UseRoomResult {
     members,
     balance,
     expenses,
+    periods,
+    activePeriod,
     currentMember,
     initialized,
     loading,

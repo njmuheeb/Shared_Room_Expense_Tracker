@@ -4,9 +4,19 @@ import { describeRoomError, useRoom } from '../../hooks/useRoom';
 import {
   addContribution,
   addExpense,
+  closeAccountingPeriod,
+  createAccountingPeriod,
+  getRoomExport,
   markReimbursementPaid,
   requestReimbursement,
+  voidExpense,
+  voidReimbursement,
 } from '../../services/roomService';
+import {
+  buildRoomExportCsv,
+  downloadCsv,
+  exportFilename,
+} from '../../utils/exportCsv';
 import { FullPageLoader } from '../common/FullPageLoader';
 import { RoomDashboard } from './RoomDashboard';
 import { RoomOnboarding } from './RoomOnboarding';
@@ -82,10 +92,62 @@ export const RoomApp: React.FC<RoomAppProps> = ({ session }) => {
       await room.refresh();
     });
 
-  const handleMarkPaid = (reimbursementId: string) =>
+  const handleMarkPaid = (
+    reimbursementId: string,
+    method?: string,
+    reference?: string,
+    paidOn?: string
+  ) =>
     runAction(async () => {
-      await markReimbursementPaid(reimbursementId);
+      await markReimbursementPaid(reimbursementId, method, reference, paidOn);
       await room.refresh();
+    });
+
+  const handleVoidExpense = (expenseId: string, reason: string, reimbursementId?: string) =>
+    runAction(async () => {
+      // If the expense has an active (pending) reimbursement, void it first
+      // so the user never has to do this as a separate manual step.
+      if (reimbursementId) {
+        try {
+          await voidReimbursement(reimbursementId, reason);
+        } catch {
+          // If the reimbursement was already voided or paid and can't be voided,
+          // let the expense void attempt surface the real error.
+        }
+      }
+      await voidExpense(expenseId, reason);
+      await room.refresh();
+    });
+
+  const handleCreatePeriod = (name: string, startsOn: string, endsOn: string) =>
+    runAction(async () => {
+      if (!room.activeRoomId) return;
+      await createAccountingPeriod({
+        roomId: room.activeRoomId,
+        name,
+        startsOn,
+        endsOn,
+      });
+      await room.refresh();
+    });
+
+  const handleClosePeriod = (periodId: string) =>
+    runAction(async () => {
+      await closeAccountingPeriod(periodId);
+      await room.refresh();
+    });
+
+  const handleExportPeriod = (startsOn: string, endsOn: string) =>
+    runAction(async () => {
+      if (!room.activeRoom || !room.activeRoomId) return;
+      const exportData = await getRoomExport(
+        room.activeRoomId,
+        startsOn,
+        endsOn
+      );
+      const csvText = buildRoomExportCsv(exportData);
+      const filename = exportFilename(room.activeRoom.name, startsOn, endsOn);
+      downloadCsv(filename, csvText);
     });
 
   const displayError = actionError ?? room.error;
@@ -161,6 +223,12 @@ export const RoomApp: React.FC<RoomAppProps> = ({ session }) => {
         onAddExpense={handleAddExpense}
         onRequestReimbursement={handleRequestReimbursement}
         onMarkPaid={handleMarkPaid}
+        onVoidExpense={handleVoidExpense}
+        periods={room.periods}
+        activePeriod={room.activePeriod}
+        onCreatePeriod={handleCreatePeriod}
+        onClosePeriod={handleClosePeriod}
+        onExportPeriod={handleExportPeriod}
       />
     </section>
   );

@@ -200,6 +200,7 @@ export interface ExpenseInput {
   amountCents: number;
   category: string;
   spentOn: string;
+  paymentSource: 'common' | 'personal';
   isReimbursable: boolean;
   note: string;
 }
@@ -226,7 +227,9 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<string>(DEFAULT_CATEGORY);
   const [spentOn, setSpentOn] = useState(todayIso());
-  const [isReimbursable, setIsReimbursable] = useState(true);
+  const [paymentSource, setPaymentSource] = useState<'common' | 'personal'>(
+    'personal'
+  );
   const [note, setNote] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -256,7 +259,8 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       amountCents,
       category,
       spentOn,
-      isReimbursable,
+      paymentSource,
+      isReimbursable: paymentSource === 'personal',
       note: note.trim(),
     });
 
@@ -265,7 +269,7 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       setAmount('');
       setCategory(DEFAULT_CATEGORY);
       setSpentOn(todayIso());
-      setIsReimbursable(true);
+      setPaymentSource('personal');
       setNote('');
       setErrors({});
     }
@@ -368,21 +372,33 @@ export const ExpenseForm: React.FC<ExpenseFormProps> = ({
       </div>
 
       <div className="form-group">
-        <label className="room-checkbox">
-          <input
-            type="checkbox"
-            checked={isReimbursable}
-            onChange={(e) => setIsReimbursable(e.target.checked)}
-            disabled={busy}
-          />
-          <span>
-            Reimbursable from the shared fund
-            <span className="room-optional">
-              {' '}
-              — uncheck for a personal purchase kept only for history
-            </span>
-          </span>
+        <label htmlFor="expense-payment-source" className="form-label">
+          Who paid for this expense?
         </label>
+
+        <select
+          id="expense-payment-source"
+          className="select-input room-select"
+          value={paymentSource}
+          onChange={(e) =>
+            setPaymentSource(e.target.value as 'common' | 'personal')
+          }
+          disabled={busy}
+        >
+          <option value="personal">
+            My Personal Money (Reimbursable claim)
+          </option>
+
+          <option value="common" disabled={!isAdmin}>
+            Shared Room Fund {!isAdmin ? '(Treasurer / Admin only)' : ''}
+          </option>
+        </select>
+
+        <span className="room-optional">
+          {paymentSource === 'personal'
+            ? 'Paid out of pocket. Creates a pending reimbursement claim for settlement.'
+            : 'Paid from shared common fund. Deducts directly from room available balance.'}
+        </span>
       </div>
 
       <div className="form-group">

@@ -1,9 +1,14 @@
 import { supabase } from '../lib/supabaseClient';
 import type {
+  AccountingPeriod,
   Contribution,
   ExpenseWithReimbursement,
+  FinancialAuditEntry,
+  MemberActivity,
+  PaymentSource,
   Room,
   RoomExpense,
+  RoomExport,
   RoomFundBalance,
   RoomMember,
 } from '../models/room';
@@ -157,13 +162,27 @@ export async function listExpenses(
 ): Promise<ExpenseWithReimbursement[]> {
   const { data, error } = await supabase
     .from('expenses')
-    .select('*, reimbursements(id, status, paid_at, voided_at)')
+    .select('*, reimbursements(id, status, paid_at, paid_on, voided_at)')
     .eq('room_id', roomId)
     .is('voided_at', null)
     .order('spent_on', { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as ExpenseWithReimbursement[];
+}
+
+/** Per-member contribution and reimbursement totals, from the derived view. */
+export async function listMemberActivity(
+  roomId: string
+): Promise<MemberActivity[]> {
+  const { data, error } = await supabase
+    .from('member_activity')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('display_name', { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as MemberActivity[];
 }
 
 export async function addExpense(input: {
@@ -175,6 +194,7 @@ export async function addExpense(input: {
   amountCents: number;
   category?: string;
   spentOn: string;
+  paymentSource: 'common' | 'personal';
   isReimbursable?: boolean;
   note?: string;
 }): Promise<RoomExpense> {
@@ -189,7 +209,11 @@ export async function addExpense(input: {
       amount_cents: input.amountCents,
       category: input.category ?? 'other',
       spent_on: input.spentOn,
-      is_reimbursable: input.isReimbursable ?? true,
+      payment_source: input.paymentSource,
+      is_reimbursable:
+        input.paymentSource === 'personal'
+          ? true
+          : false,
       note: input.note ?? null,
     })
     .select()
@@ -232,12 +256,14 @@ export async function requestReimbursement(expenseId: string): Promise<string> {
 export async function markReimbursementPaid(
   reimbursementId: string,
   method?: string,
-  reference?: string
+  reference?: string,
+  paidOn?: string
 ): Promise<void> {
   const { error } = await supabase.rpc('mark_reimbursement_paid', {
     p_reimbursement: reimbursementId,
     p_method: method ?? null,
     p_reference: reference ?? null,
+    p_paid_on: paidOn ?? null,
   });
   if (error) throw error;
 }
@@ -252,6 +278,100 @@ export async function voidReimbursement(
     p_reason: reason,
   });
   if (error) throw error;
+}
+
+/** Admin only. Corrects fields on an active expense with an audit trail. */
+export async function correctExpense(input: {
+  expenseId: string;
+  description?: string;
+  amountCents?: number;
+  category?: string;
+  spentOn?: string;
+  paymentSource?: PaymentSource;
+  note?: string;
+  reason: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('correct_expense', {
+    p_expense: input.expenseId,
+    p_description: input.description ?? null,
+    p_amount_cents: input.amountCents ?? null,
+    p_category: input.category ?? null,
+    p_spent_on: input.spentOn ?? null,
+    p_payment_source: input.paymentSource ?? null,
+    p_note: input.note ?? null,
+    p_reason: input.reason,
+  });
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// Accounting Periods & Reports
+// ---------------------------------------------------------------------------
+
+export async function listAccountingPeriods(
+  roomId: string
+): Promise<AccountingPeriod[]> {
+  const { data, error } = await supabase
+    .from('accounting_periods')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('starts_on', { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as AccountingPeriod[];
+}
+
+export async function createAccountingPeriod(input: {
+  roomId: string;
+  name: string;
+  startsOn: string;
+  endsOn: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('create_accounting_period', {
+    p_room: input.roomId,
+    p_name: input.name,
+    p_starts_on: input.startsOn,
+    p_ends_on: input.endsOn,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function closeAccountingPeriod(
+  periodId: string
+): Promise<void> {
+  const { error } = await supabase.rpc('close_accounting_period', {
+    p_period: periodId,
+  });
+  if (error) throw error;
+}
+
+export async function getRoomExport(
+  roomId: string,
+  startsOn: string,
+  endsOn: string
+): Promise<RoomExport> {
+  const { data, error } = await supabase.rpc('room_export', {
+    p_room: roomId,
+    p_from: startsOn,
+    p_ends_on: endsOn,
+  });
+  if (error) throw error;
+  return data as RoomExport;
+}
+
+export async function listAuditLogs(
+  roomId: string
+): Promise<FinancialAuditEntry[]> {
+  const { data, error } = await supabase
+    .from('financial_audit_log')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) throw error;
+  return (data ?? []) as FinancialAuditEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +415,16 @@ export function subscribeToRoom(
         event: '*',
         schema: 'public',
         table: 'reimbursements',
+        filter: `room_id=eq.${roomId}`,
+      },
+      onChange
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'accounting_periods',
         filter: `room_id=eq.${roomId}`,
       },
       onChange
