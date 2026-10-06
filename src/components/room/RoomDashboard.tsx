@@ -290,7 +290,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
     );
 
     if (!validation.ok) {
-      setPeriodErrors(validation.errors);
+      setPeriodErrors('errors' in validation ? validation.errors : {});
       return;
     }
 
