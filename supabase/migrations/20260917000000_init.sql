@@ -661,7 +661,9 @@ $$;
 --    available_balance  = fund_cash - pending_liability
 -- ---------------------------------------------------------------------------
 
-create or replace view public.room_fund_balance
+drop view if exists public.room_fund_balance cascade;
+
+create view public.room_fund_balance
 with (security_invoker = true) as
 select
   r.id                                        as room_id,
