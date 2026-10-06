@@ -200,8 +200,27 @@ export interface ExportExpenseRow {
   reimbursed_on: string | null;
 }
 
+export interface RoomExportMetadata {
+  statementId: string;
+  scopeType: 'current' | 'closed' | 'custom';
+  periodName?: string;
+  periodStatus?: 'OPEN' | 'CLOSED';
+  spansMultiplePeriods?: boolean;
+  exportedBy: {
+    name: string;
+    role: 'admin' | 'member';
+  };
+  exportedAt: string;
+  adminApproval: {
+    status: 'DIGITALLY APPROVED' | 'Pending Admin Approval';
+    approvedBy?: string;
+    approvedByRole?: string;
+    approvedAt?: string;
+  };
+}
+
 export interface RoomExport {
-  room: { id: string; name: string; currency: string };
+  room: { id: string; name: string; currency: string; join_code?: string };
   range: { from: string; to: string };
   contributions: ExportContributionRow[];
   expenses: ExportExpenseRow[];
@@ -213,4 +232,5 @@ export interface RoomExport {
     available_cents: number;
     pending_liability_cents: number;
   };
+  metadata?: RoomExportMetadata;
 }

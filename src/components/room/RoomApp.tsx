@@ -4,6 +4,7 @@ import { describeRoomError, useRoom } from '../../hooks/useRoom';
 import {
   addContribution,
   addExpense,
+  auditStatementExport,
   closeAccountingPeriod,
   createAccountingPeriod,
   getRoomExport,
@@ -137,19 +138,76 @@ export const RoomApp: React.FC<RoomAppProps> = ({ session }) => {
       await room.refresh();
     });
 
-  const handleExportPeriod = (startsOn: string, endsOn: string) =>
+  const handleExportPeriod = (
+    startsOn: string,
+    endsOn: string,
+    options?: {
+      scopeType?: 'current' | 'closed' | 'custom';
+      periodName?: string;
+      periodStatus?: 'OPEN' | 'CLOSED';
+      spansMultiplePeriods?: boolean;
+      approveAsAdmin?: boolean;
+    }
+  ) =>
     runAction(async () => {
       if (!room.activeRoom || !room.activeRoomId) return;
+
       const exportData = await getRoomExport(
         room.activeRoomId,
         startsOn,
         endsOn
       );
+
+      const code = room.activeRoom.join_code ?? room.activeRoomId.slice(0, 8).toUpperCase();
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      const statementId = `RF-${code}-${timestamp}-${randomSuffix}`;
+
+      const currentMember = room.currentMember;
+      const isAdminUser = currentMember?.role === 'admin';
+      const isApproved = Boolean(options?.approveAsAdmin && isAdminUser);
+
+      exportData.room.join_code = code;
+      exportData.metadata = {
+        statementId,
+        scopeType: options?.scopeType ?? 'custom',
+        periodName: options?.periodName,
+        periodStatus: options?.periodStatus,
+        spansMultiplePeriods: options?.spansMultiplePeriods,
+        exportedBy: {
+          name: currentMember?.display_name ?? 'Room Member',
+          role: isAdminUser ? 'admin' : 'member',
+        },
+        exportedAt: new Date().toISOString(),
+        adminApproval: isApproved
+          ? {
+              status: 'DIGITALLY APPROVED',
+              approvedBy: currentMember?.display_name ?? 'Room Admin',
+              approvedByRole: 'Room Admin',
+              approvedAt: new Date().toISOString(),
+            }
+          : {
+              status: 'Pending Admin Approval',
+            },
+      };
+
+      // Record audit log asynchronously
+      void auditStatementExport({
+        roomId: room.activeRoomId,
+        action: isApproved ? 'export_statement_approved' : 'export_statement',
+        statementId,
+        periodName: options?.periodName ?? 'Statement',
+        startsOn,
+        endsOn,
+        isApproved,
+      });
+
       const blob = buildRoomExpensesPdf(exportData);
       const filename = pdfExportFilename(
         room.activeRoom.name,
         startsOn,
-        endsOn
+        endsOn,
+        options?.periodName
       );
       downloadPdf(filename, blob);
     });

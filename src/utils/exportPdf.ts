@@ -1,4 +1,3 @@
-
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { RoomExport } from '../models/room';
@@ -17,8 +16,7 @@ const PAGE = {
 };
 
 /**
- * Banking-style palette. Navy + charcoal + a single accent green for credits
- * and red for debits. Deliberately restrained — no gradients.
+ * Banking-style palette. Navy + charcoal + accent emerald/red.
  */
 const COLORS = {
     navy: [22, 33, 62] as [number, number, number],
@@ -31,6 +29,7 @@ const COLORS = {
     debit: [186, 38, 38] as [number, number, number], // red
     white: [255, 255, 255] as [number, number, number],
     cream: [252, 250, 245] as [number, number, number],
+    gold: [197, 145, 39] as [number, number, number],
 };
 
 type RGB = [number, number, number];
@@ -54,7 +53,7 @@ function rule(doc: jsPDF, x: number, y: number, w: number, color: RGB = COLORS.r
 
 /**
  * Header band: a solid navy rectangle with the brand mark on the left and
- * "EXPENSE STATEMENT" on the right. Two-line title underneath in white.
+ * "EXPENSE STATEMENT" on the right.
  */
 function drawHeader(doc: jsPDF, data: RoomExport): number {
     const bandH = 26;
@@ -63,11 +62,11 @@ function drawHeader(doc: jsPDF, data: RoomExport): number {
     setFill(doc, COLORS.navy);
     doc.rect(PAGE.margin, y, PAGE.contentWidth, bandH, 'F');
 
-    // Thin accent line at the bottom of the band.
+    // Accent line.
     setFill(doc, COLORS.navyDark);
     doc.rect(PAGE.margin, y + bandH - 1.5, PAGE.contentWidth, 1.5, 'F');
 
-    // Brand mark — small filled square + wordmark.
+    // Brand mark
     setFill(doc, COLORS.white);
     doc.rect(PAGE.margin + 6, y + 8, 6, 10, 'F');
     setFill(doc, COLORS.navy);
@@ -84,7 +83,7 @@ function drawHeader(doc: jsPDF, data: RoomExport): number {
     doc.setFontSize(7.5);
     doc.text('Shared Room Expense Tracker', PAGE.margin + 16, y + 18);
 
-    // Right side — statement type.
+    // Right side — statement title + ID
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text('EXPENSE STATEMENT', PAGE.margin + PAGE.contentWidth - 6, y + 12, {
@@ -92,8 +91,10 @@ function drawHeader(doc: jsPDF, data: RoomExport): number {
     });
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
+    const code = data.room.join_code ?? data.room.id.slice(0, 8).toUpperCase();
+    const statementId = data.metadata?.statementId ?? `RF-${code}-${data.range.from.replace(/-/g, '')}`;
     doc.text(
-        `Account No. ${data.room.id.slice(0, 8).toUpperCase()}`,
+        `Statement ID: ${statementId}`,
         PAGE.margin + PAGE.contentWidth - 6,
         y + 18,
         { align: 'right' }
@@ -103,16 +104,15 @@ function drawHeader(doc: jsPDF, data: RoomExport): number {
 }
 
 /**
- * Account-info block: a tinted box under the header listing the account
- * holder, account number, statement period, and generation timestamp.
+ * Account & Exporter & Approval info block.
  */
 function drawAccountInfo(
     doc: jsPDF,
     data: RoomExport,
-    range: { from: string; to: string; isAllTime: boolean },
     y: number
 ): number {
-    const boxH = 30;
+    const boxH = 46;
+    const meta = data.metadata;
 
     setFill(doc, COLORS.cream);
     doc.rect(PAGE.margin, y, PAGE.contentWidth, boxH, 'F');
@@ -128,59 +128,99 @@ function drawAccountInfo(
         y + boxH - 4
     );
 
-    const colX = PAGE.margin + 6;
+    const col1X = PAGE.margin + 6;
+    const col2X = PAGE.margin + PAGE.contentWidth / 2 + 6;
 
-    // Left column
+    // --- Col 1: Room & Statement Scope ---
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     setText(doc, COLORS.slate);
-    doc.text('ACCOUNT HOLDER', colX, y + 9);
+    doc.text('ROOM & CODE', col1X, y + 8);
+
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
+    doc.setFontSize(10);
     setText(doc, COLORS.navy);
-    doc.text(data.room.name, colX, y + 15);
+    doc.text(`${data.room.name} [${data.room.join_code ?? 'CODE'}]`, col1X, y + 14);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     setText(doc, COLORS.slate);
-    doc.text('STATEMENT PERIOD', colX, y + 22);
+    doc.text('STATEMENT SCOPE / PERIOD', col1X, y + 21);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    setText(doc, COLORS.charcoal);
+    const scopeLabel = meta?.periodName
+        ? `${meta.periodName} (${meta.periodStatus ?? 'OPEN'})`
+        : meta?.spansMultiplePeriods
+        ? 'Custom Date Range (Spans multiple periods)'
+        : 'Custom Date Range';
+    doc.text(scopeLabel, col1X, y + 27);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    setText(doc, COLORS.slate);
+    const dateRangeStr = meta?.periodStatus === 'OPEN' && data.range.to >= new Date().toISOString().slice(0, 10)
+        ? `${formatDate(data.range.from)} → Present (Open)`
+        : `${formatDate(data.range.from)} → ${formatDate(data.range.to)}`;
+    doc.text(`Period: ${dateRangeStr}`, col1X, y + 33);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text(`Currency: ${data.room.currency} (₹)`, col1X, y + 39);
+
+    // --- Col 2: Exporter & Digital Approval ---
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    setText(doc, COLORS.slate);
+    doc.text('EXPORTED BY', col2X, y + 8);
+
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     setText(doc, COLORS.charcoal);
+    const exporterName = meta?.exportedBy?.name ?? 'Room Member';
+    const exporterRole = meta?.exportedBy?.role ? ` (${meta.exportedBy.role})` : '';
+    doc.text(`${exporterName}${exporterRole}`, col2X, y + 14);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    setText(doc, COLORS.slate);
+    doc.text('ADMIN DIGITAL APPROVAL STATUS', col2X, y + 21);
+
+    const isApproved = meta?.adminApproval?.status === 'DIGITALLY APPROVED';
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    setText(doc, isApproved ? COLORS.credit : COLORS.gold);
     doc.text(
-        range.isAllTime
-            ? 'All time ledger (no period set)'
-            : `${formatDate(range.from)} to ${formatDate(range.to)}`,
-        colX,
-        y + 28
+        isApproved ? '✓ DIGITALLY APPROVED BY ROOM ADMIN' : '⏳ PENDING ADMIN APPROVAL',
+        col2X,
+        y + 27
     );
 
-    // Right column
-    const rightX = PAGE.margin + PAGE.contentWidth / 2 + 6;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    setText(doc, COLORS.slate);
-    doc.text('CURRENCY', rightX, y + 9);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    setText(doc, COLORS.navy);
-    doc.text(`${data.room.currency} (₹)`, rightX, y + 15);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    setText(doc, COLORS.slate);
-    doc.text('GENERATED ON', rightX, y + 22);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
+    doc.setFontSize(8);
     setText(doc, COLORS.charcoal);
-    doc.text(formatDateTimeLong(new Date()), rightX, y + 28);
+    if (isApproved && meta?.adminApproval?.approvedBy) {
+        doc.text(
+            `Approved By: ${meta.adminApproval.approvedBy} on ${meta.adminApproval.approvedAt ? formatDate(meta.adminApproval.approvedAt) : formatDate(new Date().toISOString())}`,
+            col2X,
+            y + 33
+        );
+        doc.setFontSize(7);
+        setText(doc, COLORS.slate);
+        doc.text('Status: Digitally approved by room administrator.', col2X, y + 39);
+    } else {
+        doc.text('Generated for accounting review.', col2X, y + 33);
+        doc.setFontSize(7);
+        setText(doc, COLORS.slate);
+        doc.text('Status: Pending room administrator digital approval signature.', col2X, y + 39);
+    }
 
     return y + boxH;
 }
 
 /**
- * Balance summary: four columns — Opening, Credits, Debits, Closing.
- * Numbers are right-aligned and credits/debits are tinted green/red.
+ * Financial summary: 5 key metrics.
  */
 function drawBalanceSummary(doc: jsPDF, data: RoomExport, y: number): number {
     const blockH = 22;
@@ -188,24 +228,24 @@ function drawBalanceSummary(doc: jsPDF, data: RoomExport, y: number): number {
     setFill(doc, COLORS.navy);
     doc.rect(PAGE.margin, y, PAGE.contentWidth, blockH, 'F');
 
-    const opening = 0;
     const credits = data.summary.contributions_cents;
-    const debits =
-        data.summary.common_expenses_cents + data.summary.personal_expenses_cents;
-    const closing = data.summary.available_cents;
+    const commonExp = data.summary.common_expenses_cents;
+    const personalExp = data.summary.personal_expenses_cents;
+    const reimbursed = data.summary.reimbursed_cents;
+    const available = data.summary.available_cents;
 
     const cells: Array<{ label: string; amount: string; color: RGB }> = [
-        { label: 'OPENING BALANCE', amount: formatCentsPlain(opening), color: COLORS.white },
-        { label: 'TOTAL CREDITS', amount: formatCentsPlain(credits), color: COLORS.credit },
-        { label: 'TOTAL DEBITS', amount: formatCentsPlain(debits), color: COLORS.debit },
-        { label: 'CLOSING BALANCE', amount: formatCentsPlain(closing), color: COLORS.white },
+        { label: 'CONTRIBUTIONS', amount: formatCentsPlain(credits), color: COLORS.credit },
+        { label: 'COMMON EXP', amount: formatCentsPlain(commonExp), color: COLORS.debit },
+        { label: 'PERSONAL EXP', amount: formatCentsPlain(personalExp), color: COLORS.white },
+        { label: 'REIMBURSED', amount: formatCentsPlain(reimbursed), color: COLORS.white },
+        { label: 'AVAILABLE FUND', amount: formatCentsPlain(available), color: COLORS.white },
     ];
 
-    const colW = PAGE.contentWidth / 4;
+    const colW = PAGE.contentWidth / 5;
     cells.forEach((cell, i) => {
         const x = PAGE.margin + i * colW;
 
-        // Subtle vertical separator.
         if (i > 0) {
             setDraw(doc, COLORS.navyDark);
             doc.setLineWidth(0.2);
@@ -213,166 +253,65 @@ function drawBalanceSummary(doc: jsPDF, data: RoomExport, y: number): number {
         }
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.5);
+        doc.setFontSize(6);
         setText(doc, COLORS.slate);
-        doc.text(cell.label, x + 6, y + 8);
+        doc.text(cell.label, x + 4, y + 8);
 
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11);
+        doc.setFontSize(9.5);
         setText(doc, cell.color);
-        doc.text(cell.amount, x + 6, y + 16);
+        doc.text(cell.amount, x + 4, y + 16);
     });
 
     return y + blockH;
 }
 
 /**
- * The combined transaction ledger. Contributions are credits, expenses are
- * debits, sorted by date — exactly how a bank statement presents a current
- * account. Includes a running balance column.
+ * Member breakdown table.
  */
-function drawTransactionHistory(
-    doc: jsPDF,
-    data: RoomExport,
-    startY: number
-): void {
-    // Merge contributions + expenses into one dated ledger.
-    type Row = {
-        date: string;
-        narration: string;
-        member: string;
-        credit: number;
-        debit: number;
-        balanceAfter: number;
+function drawMemberSummary(doc: jsPDF, data: RoomExport, startY: number): number {
+    type MemberStat = {
+        name: string;
+        contributed: number;
+        personalPaid: number;
+        reimbursed: number;
     };
+    const map = new Map<string, MemberStat>();
 
-    const rows: Row[] = [];
-    let balance = 0;
-
-    const credits = data.contributions.map((c) => ({
-        date: c.contributed_on,
-        narration: c.note ? `Contribution — ${c.note}` : 'Contribution',
-        member: c.display_name,
-        amount: c.amount_cents,
-    }));
-    const debits = data.expenses.map((e) => {
-        const cat = resolveCategory(e.category);
-        return {
-            date: e.spent_on,
-            narration: e.note ? `${e.description} — ${e.note}` : e.description,
-            member: e.paid_by,
-            amount: e.amount_cents,
-            category: cat.name,
-        };
+    data.contributions.forEach((c) => {
+        if (c.voided_at) return;
+        const entry = map.get(c.display_name) ?? { name: c.display_name, contributed: 0, personalPaid: 0, reimbursed: 0 };
+        entry.contributed += c.amount_cents;
+        map.set(c.display_name, entry);
     });
 
-    // Combine and sort by date ascending (oldest first).
-    const combined: Array<{ date: string; kind: 'credit' | 'debit' } & Record<string, unknown>> = [
-        ...credits.map((c) => ({ ...c, kind: 'credit' as const })),
-        ...debits.map((d) => ({ ...d, kind: 'debit' as const })),
-    ].sort((a, b) => a.date.localeCompare(b.date));
-
-    for (const item of combined) {
-        if (item.kind === 'credit') {
-            balance += item.amount as number;
-            rows.push({
-                date: item.date as string,
-                narration: item.narration as string,
-                member: item.member as string,
-                credit: item.amount as number,
-                debit: 0,
-                balanceAfter: balance,
-            });
-        } else {
-            balance -= item.amount as number;
-            rows.push({
-                date: item.date as string,
-                narration: item.narration as string,
-                member: item.member as string,
-                credit: 0,
-                debit: item.amount as number,
-                balanceAfter: balance,
-            });
+    data.expenses.forEach((e) => {
+        if (e.voided_at) return;
+        const entry = map.get(e.paid_by) ?? { name: e.paid_by, contributed: 0, personalPaid: 0, reimbursed: 0 };
+        if (e.payment_source === 'personal') {
+            entry.personalPaid += e.amount_cents;
         }
-    }
-
-    const head = [['#', 'Date', 'Narration', 'Member', 'Credit', 'Debit', 'Balance']];
-    const body = rows.map((row, i) => [
-        String(i + 1),
-        formatDate(row.date),
-        row.narration,
-        row.member,
-        row.credit ? formatCentsPlain(row.credit) : '',
-        row.debit ? formatCentsPlain(row.debit) : '',
-        formatCentsPlain(row.balanceAfter),
-    ]);
-
-    autoTable(doc, {
-        startY,
-        margin: { left: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin + 22 },
-        head,
-        body,
-        theme: 'grid',
-        styles: {
-            font: 'helvetica',
-            fontSize: 8.2,
-            cellPadding: 2.4,
-            textColor: COLORS.charcoal,
-            lineColor: COLORS.rule,
-            lineWidth: 0.1,
-        },
-        headStyles: {
-            fillColor: COLORS.navy,
-            textColor: COLORS.white,
-            fontStyle: 'bold',
-            fontSize: 8,
-            lineColor: COLORS.navy,
-        },
-        alternateRowStyles: { fillColor: COLORS.rowAlt },
-        columnStyles: {
-            0: { cellWidth: 10, halign: 'center', fontStyle: 'bold' },
-            1: { cellWidth: 22 },
-            2: { cellWidth: 'auto' },
-            3: { cellWidth: 26 },
-            4: { cellWidth: 24, halign: 'right', textColor: COLORS.credit, fontStyle: 'bold' },
-            5: { cellWidth: 24, halign: 'right', textColor: COLORS.debit, fontStyle: 'bold' },
-            6: { cellWidth: 26, halign: 'right', fontStyle: 'bold' },
-        },
-        didDrawPage: (hookData) => {
-            // Stamp the footer on every page autoTable creates.
-            const pages = doc.getNumberOfPages();
-            const current = hookData.pageNumber;
-            drawFooter(doc, data, current, pages);
-        },
+        if (e.reimbursement_status === 'paid') {
+            entry.reimbursed += e.amount_cents;
+        }
+        map.set(e.paid_by, entry);
     });
-}
 
-/**
- * Per-category breakdown block — small two-column table showing total spent
- * in each category. Rendered after the ledger; auto-paginates if it doesn't
- * fit on the last page.
- */
-function drawCategoryBreakdown(doc: jsPDF, data: RoomExport, startY: number): void {
-    // Fold expenses into category totals.
-    const totals = new Map<string, number>();
-    for (const e of data.expenses) {
-        const cat = resolveCategory(e.category).name;
-        totals.set(cat, (totals.get(cat) ?? 0) + e.amount_cents);
-    }
+    const members = [...map.values()];
+    if (members.length === 0) return startY;
 
-    if (totals.size === 0) return; // nothing to show
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    setText(doc, COLORS.navy);
+    doc.text('MEMBER ACTIVITY SUMMARY', PAGE.margin, startY);
+    rule(doc, PAGE.margin, startY + 2, PAGE.contentWidth, COLORS.navy, 0.4);
 
-    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-    const head = [['Category', 'Transactions', 'Total Amount']];
-    const counts = new Map<string, number>();
-    for (const e of data.expenses) {
-        const cat = resolveCategory(e.category).name;
-        counts.set(cat, (counts.get(cat) ?? 0) + 1);
-    }
-    const body = sorted.map(([cat, amount]) => [
-        cat,
-        String(counts.get(cat) ?? 0),
-        formatCentsPlain(amount),
+    const head = [['Member', 'Total Contributed', 'Personal Paid', 'Total Reimbursed']];
+    const body = members.map((m) => [
+        m.name,
+        formatCentsPlain(m.contributed),
+        formatCentsPlain(m.personalPaid),
+        formatCentsPlain(m.reimbursed),
     ]);
 
     autoTable(doc, {
@@ -383,14 +322,14 @@ function drawCategoryBreakdown(doc: jsPDF, data: RoomExport, startY: number): vo
         theme: 'grid',
         styles: {
             font: 'helvetica',
-            fontSize: 8.2,
-            cellPadding: 2.4,
+            fontSize: 8,
+            cellPadding: 2,
             textColor: COLORS.charcoal,
             lineColor: COLORS.rule,
             lineWidth: 0.1,
         },
         headStyles: {
-            fillColor: COLORS.charcoal,
+            fillColor: COLORS.navy,
             textColor: COLORS.white,
             fontStyle: 'bold',
             fontSize: 8,
@@ -398,118 +337,206 @@ function drawCategoryBreakdown(doc: jsPDF, data: RoomExport, startY: number): vo
         alternateRowStyles: { fillColor: COLORS.rowAlt },
         columnStyles: {
             0: { cellWidth: 'auto', fontStyle: 'bold' },
-            1: { cellWidth: 36, halign: 'center' },
-            2: { cellWidth: 36, halign: 'right', fontStyle: 'bold' },
+            1: { cellWidth: 40, halign: 'right', textColor: COLORS.credit, fontStyle: 'bold' },
+            2: { cellWidth: 40, halign: 'right' },
+            3: { cellWidth: 40, halign: 'right' },
         },
         didDrawPage: (hookData) => {
-            const pages = doc.getNumberOfPages();
-            const current = hookData.pageNumber;
-            drawFooter(doc, data, current, pages);
+            drawFooter(doc, data, hookData.pageNumber, doc.getNumberOfPages());
+        },
+    });
+
+    return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
+/**
+ * Combined transaction ledger.
+ */
+function drawTransactionHistory(
+    doc: jsPDF,
+    data: RoomExport,
+    startY: number
+): void {
+    type Row = {
+        date: string;
+        type: string;
+        narration: string;
+        member: string;
+        credit: number;
+        debit: number;
+        status: string;
+    };
+
+    const rows: Row[] = [];
+
+    data.contributions.forEach((c) => {
+        if (c.voided_at) return;
+        rows.push({
+            date: c.contributed_on,
+            type: 'Contribution',
+            narration: c.note ? `Contribution — ${c.note}` : 'Contribution to common fund',
+            member: c.display_name,
+            credit: c.amount_cents,
+            debit: 0,
+            status: c.method ? `Paid (${c.method})` : 'Completed',
+        });
+    });
+
+    data.expenses.forEach((e) => {
+        if (e.voided_at) return;
+        const cat = resolveCategory(e.category);
+        const reimbStr = e.reimbursement_status
+            ? e.reimbursement_status.toUpperCase()
+            : 'N/A';
+        rows.push({
+            date: e.spent_on,
+            type: `${e.payment_source.toUpperCase()} (${cat.name})`,
+            narration: e.note ? `${e.description} — ${e.note}` : e.description,
+            member: e.paid_by,
+            credit: 0,
+            debit: e.amount_cents,
+            status: e.payment_source === 'personal' ? `Reimb: ${reimbStr}` : 'Common Spent',
+        });
+    });
+
+    rows.sort((a, b) => a.date.localeCompare(b.date));
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    setText(doc, COLORS.navy);
+    doc.text('TRANSACTION LEDGER', PAGE.margin, startY);
+    rule(doc, PAGE.margin, startY + 2, PAGE.contentWidth, COLORS.navy, 0.4);
+
+    if (rows.length === 0) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        setText(doc, COLORS.slate);
+        doc.text('No active transactions recorded for this period.', PAGE.margin, startY + 10);
+        (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable = { finalY: startY + 14 };
+        return;
+    }
+
+    const head = [['#', 'Date', 'Type & Description', 'Paid By', 'Credit', 'Debit', 'Status']];
+    const body = rows.map((row, i) => [
+        String(i + 1),
+        formatDate(row.date),
+        `${row.type}\n${row.narration}`,
+        row.member,
+        row.credit ? formatCentsPlain(row.credit) : '',
+        row.debit ? formatCentsPlain(row.debit) : '',
+        row.status,
+    ]);
+
+    autoTable(doc, {
+        startY: startY + 4,
+        margin: { left: PAGE.margin, right: PAGE.margin, bottom: PAGE.margin + 22 },
+        head,
+        body,
+        theme: 'grid',
+        styles: {
+            font: 'helvetica',
+            fontSize: 7.8,
+            cellPadding: 2,
+            textColor: COLORS.charcoal,
+            lineColor: COLORS.rule,
+            lineWidth: 0.1,
+        },
+        headStyles: {
+            fillColor: COLORS.navy,
+            textColor: COLORS.white,
+            fontStyle: 'bold',
+            fontSize: 8,
+        },
+        alternateRowStyles: { fillColor: COLORS.rowAlt },
+        columnStyles: {
+            0: { cellWidth: 8, halign: 'center', fontStyle: 'bold' },
+            1: { cellWidth: 20 },
+            2: { cellWidth: 'auto' },
+            3: { cellWidth: 24 },
+            4: { cellWidth: 22, halign: 'right', textColor: COLORS.credit, fontStyle: 'bold' },
+            5: { cellWidth: 22, halign: 'right', textColor: COLORS.debit, fontStyle: 'bold' },
+            6: { cellWidth: 26, fontSize: 7, halign: 'center' },
+        },
+        didDrawPage: (hookData) => {
+            drawFooter(doc, data, hookData.pageNumber, doc.getNumberOfPages());
         },
     });
 }
 
 /**
- * Footer bar on every page — thin navy strip with "Computer-generated
- * statement" on the left and page number on the right.
+ * Footer bar on every page.
  */
 function drawFooter(
     doc: jsPDF,
-    _data: RoomExport,
+    data: RoomExport,
     page: number,
     pages: number
 ): void {
     const footerH = 14;
     const y = PAGE.height - PAGE.margin - footerH + 6;
+    const meta = data.metadata;
+    const code = data.room.join_code ?? data.room.id.slice(0, 8).toUpperCase();
+    const statementId = meta?.statementId ?? `RF-${code}-${data.range.from.replace(/-/g, '')}`;
 
     setFill(doc, COLORS.navy);
     doc.rect(PAGE.margin, y, PAGE.contentWidth, footerH, 'F');
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     setText(doc, COLORS.white);
+
+    const approvalText = meta?.adminApproval?.status === 'DIGITALLY APPROVED'
+        ? `Digitally Approved by Admin: ${meta.adminApproval.approvedBy ?? 'Admin'}`
+        : 'Status: Pending Admin Approval';
+
     doc.text(
-        'RoomFund · Computer-generated statement · This document is system-generated and requires no signature.',
-        PAGE.margin + 6,
-        y + 6
+        `RoomFund · Statement ${statementId} · Exported by: ${meta?.exportedBy?.name ?? 'Member'} · ${approvalText}`,
+        PAGE.margin + 4,
+        y + 5
+    );
+
+    doc.text(
+        'Note: This document provides digital approval tracking and does not constitute a cryptographic certificate signature.',
+        PAGE.margin + 4,
+        y + 10
     );
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.text(
         `Page ${page} of ${pages}`,
-        PAGE.margin + PAGE.contentWidth - 6,
-        y + 6,
+        PAGE.margin + PAGE.contentWidth - 4,
+        y + 5,
         { align: 'right' }
     );
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     doc.text(
-        `Generated ${formatDateTimeLong(new Date())}`,
-        PAGE.margin + PAGE.contentWidth - 6,
-        y + 11,
+        `Exported: ${formatDateTimeLong(new Date())}`,
+        PAGE.margin + PAGE.contentWidth - 4,
+        y + 10,
         { align: 'right' }
     );
 }
 
 /**
- * Detects the "all time" sentinel range (from=2020-01-01 and to=today) used
- * by the dashboard when no accounting period is set.
- */
-function describeRange(range: { from: string; to: string }): {
-    from: string;
-    to: string;
-    isAllTime: boolean;
-} {
-    const todayIso = new Date().toISOString().slice(0, 10);
-    return {
-        from: range.from,
-        to: range.to,
-        isAllTime: range.from === '2020-01-01' && range.to === todayIso,
-    };
-}
-
-/**
- * Builds and returns the banking-style expense PDF for one `RoomExport`
- * payload. Caller triggers a download with `downloadPdf(filename, blob)`.
+ * Builds and returns the professional expense PDF statement.
  */
 export function buildRoomExpensesPdf(data: RoomExport): Blob {
     const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-    const range = describeRange(data.range);
 
-    // Header → account info → balance summary.
     let y = drawHeader(doc, data);
-    y += 6;
-    y = drawAccountInfo(doc, data, range, y);
-    y += 6;
+    y += 4;
+    y = drawAccountInfo(doc, data, y);
+    y += 4;
     y = drawBalanceSummary(doc, data, y);
-    y += 8;
-
-    // Transaction history heading.
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    setText(doc, COLORS.navy);
-    doc.text('TRANSACTION HISTORY', PAGE.margin, y);
-    rule(doc, PAGE.margin, y + 2, PAGE.contentWidth, COLORS.navy, 0.4);
     y += 6;
 
-    // Ledger table (auto-paginates) → returns the Y where the table ended.
+    y = drawMemberSummary(doc, data, y);
+    y += 6;
+
     drawTransactionHistory(doc, data, y);
 
-    // Read the final Y from autoTable's lastAutoTable property.
-    const lastY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
-
-    // Category breakdown heading + table.
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    setText(doc, COLORS.navy);
-    doc.text('EXPENSES BY CATEGORY', PAGE.margin, lastY + 12);
-    rule(doc, PAGE.margin, lastY + 14, PAGE.contentWidth, COLORS.navy, 0.4);
-
-    drawCategoryBreakdown(doc, data, lastY + 14);
-
-    // Final pass — make sure every page has the footer (cheap insurance in
-    // case the autoTable hooks missed one).
     const pages = doc.getNumberOfPages();
     for (let p = 1; p <= pages; p += 1) {
         doc.setPage(p);
@@ -519,25 +546,33 @@ export function buildRoomExpensesPdf(data: RoomExport): Blob {
     return doc.output('blob');
 }
 
-/** Builds `<room-slug>_<from>_<to>.pdf` for one export call. */
+/** Builds descriptive filename for PDF exports. */
 export function pdfExportFilename(
     roomName: string,
     startsOn: string,
-    endsOn: string
+    endsOn: string,
+    periodName?: string
 ): string {
     const slug =
         roomName
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '')
-            .slice(0, 60) || 'room';
-    return `${slug}_${startsOn}_to_${endsOn}.pdf`;
+            .slice(0, 40) || 'room';
+    
+    if (periodName) {
+        const periodSlug = periodName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 30);
+        return `RoomFund_${slug}_${periodSlug}_${startsOn}_to_${endsOn}.pdf`;
+    }
+
+    return `RoomFund_${slug}_Statement_${startsOn}_to_${endsOn}.pdf`;
 }
 
-/**
- * Triggers a browser download of `blob` as `filename`. Uses a Blob URL so
- * nothing is round-tripped through a server.
- */
+/** Downloads blob as filename. */
 export function downloadPdf(filename: string, blob: Blob): void {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');

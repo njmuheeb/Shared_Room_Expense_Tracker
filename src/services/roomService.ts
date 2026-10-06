@@ -360,6 +360,29 @@ export async function getRoomExport(
   return data as RoomExport;
 }
 
+export async function auditStatementExport(input: {
+  roomId: string;
+  action: string;
+  statementId: string;
+  periodName: string;
+  startsOn: string;
+  endsOn: string;
+  isApproved: boolean;
+}): Promise<void> {
+  const { error } = await supabase.rpc('audit_statement_export', {
+    p_room: input.roomId,
+    p_action: input.action,
+    p_statement_id: input.statementId,
+    p_period_name: input.periodName,
+    p_starts_on: input.startsOn,
+    p_ends_on: input.endsOn,
+    p_is_approved: input.isApproved,
+  });
+  if (error) {
+    console.warn('Failed to record statement audit log:', error.message);
+  }
+}
+
 export async function listAuditLogs(
   roomId: string
 ): Promise<FinancialAuditEntry[]> {

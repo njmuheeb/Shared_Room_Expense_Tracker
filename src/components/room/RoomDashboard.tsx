@@ -37,7 +37,17 @@ interface RoomDashboardProps {
   onVoidExpense?: (expenseId: string, reason: string, reimbursementId?: string) => Promise<void>;
   onCreatePeriod?: (name: string, startsOn: string, endsOn?: string | null) => Promise<void>;
   onClosePeriod?: (periodId: string) => Promise<void>;
-  onExportPeriod?: (startsOn: string, endsOn: string) => Promise<void>;
+  onExportPeriod?: (
+    startsOn: string,
+    endsOn: string,
+    options?: {
+      scopeType?: 'current' | 'closed' | 'custom';
+      periodName?: string;
+      periodStatus?: 'OPEN' | 'CLOSED';
+      spansMultiplePeriods?: boolean;
+      approveAsAdmin?: boolean;
+    }
+  ) => Promise<void>;
 }
 
 export const RoomDashboard: React.FC<RoomDashboardProps> = ({
@@ -88,6 +98,109 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
 
   const [closingPeriod, setClosingPeriod] = useState<AccountingPeriod | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
+
+  // Export Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportScope, setExportScope] = useState<'current' | 'closed' | 'custom'>('current');
+  const [selectedClosedPeriodId, setSelectedClosedPeriodId] = useState<string>('');
+  const [customFromDate, setCustomFromDate] = useState(todayIso());
+  const [customToDate, setCustomToDate] = useState(todayIso());
+  const [exportStep, setExportStep] = useState<'configure' | 'preview'>('configure');
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const closedPeriods = useMemo(() => {
+    return periods.filter((p) => p.status === 'closed');
+  }, [periods]);
+
+  const openPeriod = useMemo(() => {
+    return periods.find((p) => p.status === 'open') ?? activePeriod ?? null;
+  }, [periods, activePeriod]);
+
+  const handleOpenExportModal = () => {
+    setExportScope(openPeriod ? 'current' : closedPeriods.length > 0 ? 'closed' : 'custom');
+    if (closedPeriods.length > 0) {
+      setSelectedClosedPeriodId(closedPeriods[0].id);
+    }
+    setCustomFromDate(openPeriod ? openPeriod.starts_on : '2026-10-01');
+    setCustomToDate(todayIso());
+    setExportStep('configure');
+    setExportError(null);
+    setShowExportModal(true);
+  };
+
+  const getExportParams = () => {
+    if (exportScope === 'current') {
+      const from = openPeriod ? openPeriod.starts_on : '2026-10-01';
+      const to = openPeriod && openPeriod.ends_on ? openPeriod.ends_on : todayIso();
+      return {
+        from,
+        to,
+        scopeType: 'current' as const,
+        periodName: openPeriod ? openPeriod.name : 'Current Expenses',
+        periodStatus: 'OPEN' as const,
+        spansMultiplePeriods: false,
+      };
+    } else if (exportScope === 'closed') {
+      const target = closedPeriods.find((p) => p.id === selectedClosedPeriodId) ?? closedPeriods[0];
+      const from = target ? target.starts_on : '2026-10-01';
+      const to = target && target.ends_on ? target.ends_on : todayIso();
+      return {
+        from,
+        to,
+        scopeType: 'closed' as const,
+        periodName: target ? target.name : 'Closed Period',
+        periodStatus: 'CLOSED' as const,
+        spansMultiplePeriods: false,
+      };
+    } else {
+      const spansMultiple = periods.length > 1;
+      return {
+        from: customFromDate,
+        to: customToDate,
+        scopeType: 'custom' as const,
+        periodName: 'Custom Range Statement',
+        spansMultiplePeriods: spansMultiple,
+      };
+    }
+  };
+
+  const handleProceedToExportPreview = () => {
+    setExportError(null);
+    if (exportScope === 'custom') {
+      if (!customFromDate || !customToDate) {
+        setExportError('Both From and To dates are required.');
+        return;
+      }
+      if (customFromDate > customToDate) {
+        setExportError('The From date cannot be after the To date.');
+        return;
+      }
+    } else if (exportScope === 'closed' && !selectedClosedPeriodId && closedPeriods.length === 0) {
+      setExportError('No closed periods available to export.');
+      return;
+    }
+    setExportStep('preview');
+  };
+
+  const handleExecuteExport = async (approveAsAdmin = false) => {
+    if (!onExportPeriod) return;
+    setExportError(null);
+    try {
+      const params = getExportParams();
+      await onExportPeriod(params.from, params.to, {
+        scopeType: params.scopeType,
+        periodName: params.periodName,
+        periodStatus: params.periodStatus,
+        spansMultiplePeriods: params.spansMultiplePeriods,
+        approveAsAdmin,
+      });
+      setShowExportModal(false);
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : 'Failed to generate PDF statement.'
+      );
+    }
+  };
 
   const isAdmin = currentMember?.role === 'admin';
 
@@ -209,13 +322,6 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
     }
   };
 
-  const handleExportCurrentPeriod = async () => {
-    if (!onExportPeriod) return;
-    const from = activePeriod ? activePeriod.starts_on : '2020-01-01';
-    const to = activePeriod && activePeriod.ends_on ? activePeriod.ends_on : todayIso();
-    await onExportPeriod(from, to);
-  };
-
   return (
     <div className="room-dashboard">
       <div className="room-metrics">
@@ -272,7 +378,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
               type="button"
               className="btn btn-primary room-mini-btn"
               disabled={busy}
-              onClick={() => void handleExportCurrentPeriod()}
+              onClick={handleOpenExportModal}
             >
               📄 Export Statement (PDF)
             </button>
@@ -788,6 +894,212 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
               >
                 {busy ? 'Closing…' : 'Confirm & Close Period'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Statement Modal */}
+      {showExportModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: '560px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">📄 Export Statement (PDF)</h3>
+              <button
+                type="button"
+                className="btn btn-ghost room-mini-btn"
+                onClick={() => setShowExportModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {exportError && (
+                <div className="room-notice room-notice--error" style={{ marginBottom: '1rem' }}>
+                  {exportError}
+                </div>
+              )}
+
+              {exportStep === 'configure' ? (
+                <>
+                  <div className="form-group" style={{ marginBottom: '1rem' }}>
+                    <label className="form-label" style={{ fontWeight: 600 }}>Statement Scope</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.4rem' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name="exportScope"
+                          value="current"
+                          checked={exportScope === 'current'}
+                          onChange={() => setExportScope('current')}
+                        />
+                        <span><strong>Current Accounting Period</strong></span>
+                      </label>
+                      {exportScope === 'current' && (
+                        <div style={{ marginLeft: '1.6rem', fontSize: '0.85rem', color: 'var(--color-text-secondary)', background: 'var(--color-bg-secondary)', padding: '0.5rem 0.75rem', borderRadius: '4px' }}>
+                          Period: <strong>{openPeriod ? openPeriod.name : 'Current Expenses'}</strong><br />
+                          Date Range: {openPeriod ? `${formatDate(openPeriod.starts_on)} → Present (Open)` : 'All Time'}
+                        </div>
+                      )}
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name="exportScope"
+                          value="closed"
+                          checked={exportScope === 'closed'}
+                          disabled={closedPeriods.length === 0}
+                          onChange={() => setExportScope('closed')}
+                        />
+                        <span><strong>Previous / Closed Accounting Period</strong> {closedPeriods.length === 0 && '(None available)'}</span>
+                      </label>
+                      {exportScope === 'closed' && closedPeriods.length > 0 && (
+                        <div style={{ marginLeft: '1.6rem', marginTop: '0.2rem' }}>
+                          <select
+                            className="form-input"
+                            value={selectedClosedPeriodId}
+                            onChange={(e) => setSelectedClosedPeriodId(e.target.value)}
+                          >
+                            {closedPeriods.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} ({formatDate(p.starts_on)} → {p.ends_on ? formatDate(p.ends_on) : 'CLOSED'})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name="exportScope"
+                          value="custom"
+                          checked={exportScope === 'custom'}
+                          onChange={() => setExportScope('custom')}
+                        />
+                        <span><strong>Custom Date Range</strong></span>
+                      </label>
+                      {exportScope === 'custom' && (
+                        <div style={{ marginLeft: '1.6rem', marginTop: '0.2rem' }}>
+                          <div className="room-form-row">
+                            <div className="form-group">
+                              <label className="form-label" style={{ fontSize: '0.8rem' }}>From Date</label>
+                              <input
+                                type="date"
+                                className="form-input"
+                                value={customFromDate}
+                                onChange={(e) => setCustomFromDate(e.target.value)}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label className="form-label" style={{ fontSize: '0.8rem' }}>To Date</label>
+                              <input
+                                type="date"
+                                className="form-input"
+                                value={customToDate}
+                                onChange={(e) => setCustomToDate(e.target.value)}
+                              />
+                            </div>
+                          </div>
+                          {periods.length > 1 && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
+                              ℹ️ Custom date range spans multiple accounting periods. Statement will be labeled accordingly.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ background: 'var(--color-bg-secondary)', padding: '0.75rem', borderRadius: '6px', fontSize: '0.85rem' }}>
+                    <div><strong>Exported By:</strong> {currentMember?.display_name ?? 'Room Member'} ({isAdmin ? 'Treasurer / Admin' : 'Member'})</div>
+                    <div><strong>Admin Digital Approval:</strong> {isAdmin ? 'Available at generation' : 'Pending Admin Approval'}</div>
+                  </div>
+                </>
+              ) : (
+                /* PREVIEW STEP */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ background: 'var(--color-bg-secondary)', padding: '1rem', borderRadius: '6px' }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--color-navy)' }}>Statement Preview Confirmation</h4>
+                    <div style={{ fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
+                      <div><strong>Scope:</strong> {getExportParams().periodName}</div>
+                      <div><strong>Date Range:</strong> {formatDate(getExportParams().from)} → {formatDate(getExportParams().to)}</div>
+                      <div><strong>Exported By:</strong> {currentMember?.display_name ?? 'Room Member'}</div>
+                      <div><strong>Total Contributions:</strong> {formatCents(balance?.total_contributions_cents ?? 0)}</div>
+                      <div><strong>Common Expenses:</strong> {formatCents(balance?.total_reimbursed_cents ?? 0)}</div>
+                      <div><strong>Available Fund:</strong> {formatCents(balance?.available_balance_cents ?? 0)}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '0.85rem', padding: '0.5rem 0.75rem', borderLeft: '3px solid var(--color-primary)', background: 'var(--color-bg-secondary)' }}>
+                    {isAdmin ? (
+                      <div>
+                        🛡️ <strong>Admin Authorization:</strong> As room administrator, you can digitally approve this statement or generate it as unapproved.
+                      </div>
+                    ) : (
+                      <div>
+                        ℹ️ <strong>Member Notice:</strong> This statement will be tagged as <em>"Pending Admin Approval"</em>.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              {exportStep === 'configure' ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setShowExportModal(false)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleProceedToExportPreview}
+                    disabled={busy}
+                  >
+                    Next: Preview Statement →
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setExportStep('configure')}
+                    disabled={busy}
+                  >
+                    ← Back
+                  </button>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ border: '1px solid var(--color-primary)' }}
+                        onClick={() => void handleExecuteExport(false)}
+                        disabled={busy}
+                      >
+                        Generate Unapproved
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void handleExecuteExport(isAdmin)}
+                      disabled={busy}
+                    >
+                      {isAdmin ? '🔒 Generate & Digitally Approve' : '📄 Generate Statement'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
