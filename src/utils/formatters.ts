@@ -42,7 +42,11 @@ export function formatDate(dateString: string): string {
     year: 'numeric',
   }).format(date);
 }
-
+export function formatDateTimeLong(value: Date | string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+}
 /**
  * Returns today's date as a local ISO day string (YYYY-MM-DD).
  * Uses local time deliberately so a late-evening entry is not dated tomorrow.

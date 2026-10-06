@@ -268,11 +268,11 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
           {onExportPeriod && (
             <button
               type="button"
-              className="btn btn-ghost room-mini-btn"
+              className="btn btn-primary room-mini-btn"
               disabled={busy}
               onClick={() => void handleExportCurrentPeriod()}
             >
-              📥 Export CSV Report
+              📄 Export Statement (PDF)
             </button>
           )}
 

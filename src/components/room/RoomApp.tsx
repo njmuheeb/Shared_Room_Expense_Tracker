@@ -13,10 +13,10 @@ import {
   voidReimbursement,
 } from '../../services/roomService';
 import {
-  buildRoomExportCsv,
-  downloadCsv,
-  exportFilename,
-} from '../../utils/exportCsv';
+  buildRoomExpensesPdf,
+  downloadPdf,
+  pdfExportFilename,
+} from '../../utils/exportPdf';
 import { FullPageLoader } from '../common/FullPageLoader';
 import { RoomDashboard } from './RoomDashboard';
 import { RoomOnboarding } from './RoomOnboarding';
@@ -145,9 +145,13 @@ export const RoomApp: React.FC<RoomAppProps> = ({ session }) => {
         startsOn,
         endsOn
       );
-      const csvText = buildRoomExportCsv(exportData);
-      const filename = exportFilename(room.activeRoom.name, startsOn, endsOn);
-      downloadCsv(filename, csvText);
+      const blob = buildRoomExpensesPdf(exportData);
+      const filename = pdfExportFilename(
+        room.activeRoom.name,
+        startsOn,
+        endsOn
+      );
+      downloadPdf(filename, blob);
     });
 
   const displayError = actionError ?? room.error;

@@ -22,6 +22,9 @@ export function toMajorUnits(cents: number): number {
 export function formatCents(cents: number, currencyCode = CURRENCY_CODE): string {
   return formatCurrency(toMajorUnits(cents), currencyCode);
 }
+export function formatCentsPlain(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
 
 // ---------------------------------------------------------------------------
 // Balance arithmetic

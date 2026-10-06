@@ -25,3 +25,14 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 ];
 
 export const DEFAULT_EXPENSE_CATEGORY = EXPENSE_CATEGORIES[0]?.id ?? 'other';
+
+/**
+ * Look up a category by its `id`. If the id is not found in the predefined
+ * list (e.g. a free-text value stored in the DB), falls back to a generic
+ * "Other" entry so callers always receive a valid `ExpenseCategory` object.
+ */
+export function resolveCategory(id: string | undefined | null): ExpenseCategory {
+  return (
+    EXPENSE_CATEGORIES.find((c) => c.id === id) ?? { id: id ?? 'other', name: id ?? 'Other', icon: '📦' }
+  );
+}
