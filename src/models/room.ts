@@ -150,7 +150,7 @@ export interface AccountingPeriod {
   room_id: string;
   name: string;
   starts_on: string;
-  ends_on: string;
+  ends_on: string | null;
   status: PeriodStatus;
   closed_at: string | null;
   closed_by_member_id: string | null;

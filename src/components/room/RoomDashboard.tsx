@@ -210,7 +210,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   const handleExportCurrentPeriod = async () => {
     if (!onExportPeriod) return;
     const from = activePeriod ? activePeriod.starts_on : '2020-01-01';
-    const to = activePeriod ? activePeriod.ends_on : todayIso();
+    const to = activePeriod && activePeriod.ends_on ? activePeriod.ends_on : todayIso();
     await onExportPeriod(from, to);
   };
 
@@ -257,7 +257,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
           <span className="room-metric-label">Room code: <code className="room-roomcode-value">{room.join_code}</code></span>
           <div style={{ fontWeight: 600, fontSize: '0.95rem', marginTop: '0.2rem' }}>
             {activePeriod ? (
-              <span>📅 {activePeriod.name} ({formatDate(activePeriod.starts_on)} → {formatDate(activePeriod.ends_on)})</span>
+              <span>📅 {activePeriod.name} ({formatDate(activePeriod.starts_on)} → {activePeriod.ends_on ? formatDate(activePeriod.ends_on) : 'OPEN'})</span>
             ) : (
               <span>📅 All Time / Custom Ledger</span>
             )}
@@ -699,7 +699,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">End Date</label>
+                  <label className="form-label">End Date <span style={{ fontWeight: 'normal', opacity: 0.7 }}>(Optional - set when closing)</span></label>
                   <input
                     type="date"
                     className="form-input"
@@ -763,7 +763,7 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
               )}
 
               <p>
-                Closing <strong>{closingPeriod.name}</strong> ({formatDate(closingPeriod.starts_on)} → {formatDate(closingPeriod.ends_on)}) will lock this period's ledger records into historical reference.
+                Closing <strong>{closingPeriod.name}</strong> ({formatDate(closingPeriod.starts_on)} → {closingPeriod.ends_on ? formatDate(closingPeriod.ends_on) : todayIso()}) will set its end date to today and lock this period's ledger records into historical reference.
               </p>
               <p className="room-hint">
                 You can export report data at any time before or after closing.

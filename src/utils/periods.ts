@@ -20,11 +20,11 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 export interface PeriodDraft {
   name: string;
   startsOn: string;
-  endsOn: string;
+  endsOn?: string;
 }
 
 export type PeriodValidation =
-  | { ok: true; value: { name: string; startsOn: string; endsOn: string } }
+  | { ok: true; value: { name: string; startsOn: string; endsOn?: string } }
   | { ok: false; errors: Record<string, string> };
 
 /** True when the string is a real calendar day in YYYY-MM-DD form. */
@@ -42,24 +42,28 @@ export function isIsoDay(value: string): boolean {
 }
 
 /**
- * True when two inclusive date ranges share at least one day.
- *
- * Touching ranges do not overlap: January ending the 31st and February starting
- * the 1st are adjacent, not overlapping. Half-open comparison is exactly what
- * the `daterange &&` operator in the migration's exclusion constraint does.
+ * True when two date ranges share at least one day.
+ * If an end date is null/undefined, it represents an open-ended range extending to infinity.
  */
 export function rangesOverlap(
   aStart: string,
-  aEnd: string,
+  aEnd: string | null | undefined,
   bStart: string,
-  bEnd: string
+  bEnd: string | null | undefined
 ): boolean {
-  return aStart <= bEnd && bStart <= aEnd;
+  const aOverlapsB = aEnd == null || aEnd >= bStart;
+  const bOverlapsA = bEnd == null || bEnd >= aStart;
+  return aOverlapsB && bOverlapsA;
 }
 
-/** True when `date` falls inside the period, inclusive of both endpoints. */
+/**
+ * True when `date` falls inside the period.
+ * For open periods (ends_on is null), date only needs to be >= starts_on.
+ */
 export function isDateInPeriod(date: string, period: AccountingPeriod): boolean {
-  return date >= period.starts_on && date <= period.ends_on;
+  if (date < period.starts_on) return false;
+  if (period.ends_on != null && date > period.ends_on) return false;
+  return true;
 }
 
 /**
@@ -105,30 +109,23 @@ export function validatePeriodDraft(
     errors.startsOn = 'That is not a valid date.';
   }
 
-  if (!draft.endsOn) {
-    errors.endsOn = 'Choose an end date.';
-  } else if (!isIsoDay(draft.endsOn)) {
+  if (draft.endsOn && !isIsoDay(draft.endsOn)) {
     errors.endsOn = 'That is not a valid date.';
   }
 
-  // Only compare the two dates when both are real, or a typo in the start date
-  // would be reported as "ends before it starts", which is not the real problem.
-  const bothDatesValid =
-    !errors.startsOn &&
-    !errors.endsOn &&
-    isIsoDay(draft.startsOn) &&
-    isIsoDay(draft.endsOn);
+  const startValid = !errors.startsOn && isIsoDay(draft.startsOn);
+  const endValid = !draft.endsOn || (!errors.endsOn && isIsoDay(draft.endsOn));
 
-  if (bothDatesValid && draft.endsOn < draft.startsOn) {
+  if (startValid && draft.endsOn && endValid && draft.endsOn < draft.startsOn) {
     errors.endsOn = 'The end date cannot be before the start date.';
   }
 
-  if (bothDatesValid && !errors.endsOn) {
+  if (startValid && endValid && !errors.endsOn) {
     const clash = existing.find((period) =>
       rangesOverlap(draft.startsOn, draft.endsOn, period.starts_on, period.ends_on)
     );
     if (clash) {
-      errors.endsOn = `These dates overlap “${clash.name}”. Periods cannot overlap.`;
+      errors.startsOn = `These dates overlap “${clash.name}”. Periods cannot overlap.`;
     }
   }
 

@@ -325,13 +325,13 @@ export async function createAccountingPeriod(input: {
   roomId: string;
   name: string;
   startsOn: string;
-  endsOn: string;
+  endsOn?: string | null;
 }): Promise<string> {
   const { data, error } = await supabase.rpc('create_accounting_period', {
     p_room: input.roomId,
     p_name: input.name,
     p_starts_on: input.startsOn,
-    p_ends_on: input.endsOn,
+    p_ends_on: input.endsOn ?? null,
   });
   if (error) throw error;
   return data as string;
