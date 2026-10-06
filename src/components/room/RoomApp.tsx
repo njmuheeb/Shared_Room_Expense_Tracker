@@ -119,7 +119,7 @@ export const RoomApp: React.FC<RoomAppProps> = ({ session }) => {
       await room.refresh();
     });
 
-  const handleCreatePeriod = (name: string, startsOn: string, endsOn: string) =>
+  const handleCreatePeriod = (name: string, startsOn: string, endsOn?: string | null) =>
     runAction(async () => {
       if (!room.activeRoomId) return;
       await createAccountingPeriod({

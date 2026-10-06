@@ -35,7 +35,7 @@ interface RoomDashboardProps {
     paidOn?: string
   ) => Promise<void>;
   onVoidExpense?: (expenseId: string, reason: string, reimbursementId?: string) => Promise<void>;
-  onCreatePeriod?: (name: string, startsOn: string, endsOn: string) => Promise<void>;
+  onCreatePeriod?: (name: string, startsOn: string, endsOn?: string | null) => Promise<void>;
   onClosePeriod?: (periodId: string) => Promise<void>;
   onExportPeriod?: (startsOn: string, endsOn: string) => Promise<void>;
 }
@@ -163,15 +163,16 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
   const handleOpenCreatePeriod = () => {
     setPeriodName('');
     setPeriodStartsOn(todayIso());
-    setPeriodEndsOn(todayIso());
+    setPeriodEndsOn('');
     setPeriodErrors({});
     setShowCreatePeriodModal(true);
   };
 
   const handleConfirmCreatePeriod = async () => {
     if (!onCreatePeriod) return;
+    const endDateValue = periodEndsOn && periodEndsOn.trim() !== '' ? periodEndsOn.trim() : undefined;
     const validation = validatePeriodDraft(
-      { name: periodName, startsOn: periodStartsOn, endsOn: periodEndsOn },
+      { name: periodName, startsOn: periodStartsOn, endsOn: endDateValue },
       periods
     );
 
@@ -181,7 +182,8 @@ export const RoomDashboard: React.FC<RoomDashboardProps> = ({
     }
 
     try {
-      await onCreatePeriod(periodName.trim(), periodStartsOn, periodEndsOn);
+      const sanitizedEndsOn = endDateValue ?? null;
+      await onCreatePeriod(periodName.trim(), periodStartsOn, sanitizedEndsOn);
       setShowCreatePeriodModal(false);
     } catch (err) {
       setPeriodErrors({
