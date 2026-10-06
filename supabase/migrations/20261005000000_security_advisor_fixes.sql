@@ -32,8 +32,7 @@ revoke execute on function public.lock_reimbursed_expense()           from publi
 
 -- guard_member_self_update and validate_expense_reimbursement are defined
 -- in the init migration; revoke here so we don't need to touch that file.
-do $$
-begin
+do $$ begin
   if exists (
     select 1 from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
@@ -50,7 +49,7 @@ begin
     execute 'revoke execute on function public.validate_expense_reimbursement() from public, anon, authenticated';
   end if;
 end;
-$$;
+ $$;
 
 
 -- ---------------------------------------------------------------------------
