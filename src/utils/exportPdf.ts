@@ -1,15 +1,19 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { RoomExport } from '../models/room';
-import { formatCentsPlain } from './money';
 import { formatDate } from './formatters';
 import { resolveCategory } from './constants';
 
-/** Page geometry in millimetres (jsPDF default unit). */
+// ---------------------------------------------------------------------------
+// Page geometry (millimetres — jsPDF default unit)
+// ---------------------------------------------------------------------------
+
 const PAGE = {
   width: 210,
   height: 297,
   margin: 16,
+  /** Vertical zone reserved for the footer on every page. */
+  footerZone: 18,
   get contentWidth(): number {
     return this.width - this.margin * 2;
   },
@@ -22,49 +26,66 @@ const PAGE = {
   get contentTop(): number {
     return this.margin;
   },
+  /** Bottom limit for body content (above the footer). */
   get contentBottom(): number {
-    return this.height - this.margin;
+    return this.height - this.margin - this.footerZone;
   },
 };
 
-/** Professional color palette. */
-const COLORS = {
-  navy: [23, 33, 61] as [number, number, number],
-  navyDark: [15, 22, 42] as [number, number, number],
-  navyLight: [30, 42, 75] as [number, number, number],
-  charcoal: [45, 49, 60] as [number, number, number],
-  slate: [100, 108, 125] as [number, number, number],
-  slateLight: [148, 155, 170] as [number, number, number],
-  rule: [220, 224, 232] as [number, number, number],
-  rowAlt: [248, 250, 253] as [number, number, number],
-  credit: [14, 116, 82] as [number, number, number],
-  debit: [185, 38, 38] as [number, number, number],
-  white: [255, 255, 255] as [number, number, number],
-  cream: [252, 250, 245] as [number, number, number],
-  gold: [180, 135, 30] as [number, number, number],
-};
+// ---------------------------------------------------------------------------
+// Color palette
+// ---------------------------------------------------------------------------
 
 type RGB = [number, number, number];
 
-function setFill(doc: jsPDF, [r, g, b]: RGB): void {
-  doc.setFillColor(r, g, b);
+const C = {
+  navy: [23, 33, 61] as RGB,
+  charcoal: [45, 49, 60] as RGB,
+  body: [55, 55, 65] as RGB,
+  slate: [100, 108, 125] as RGB,
+  rule: [210, 215, 225] as RGB,
+  rowAlt: [247, 249, 252] as RGB,
+  white: [255, 255, 255] as RGB,
+  credit: [14, 116, 82] as RGB,
+  debit: [185, 38, 38] as RGB,
+  bg: [250, 251, 253] as RGB,
+};
+
+// ---------------------------------------------------------------------------
+// Tiny helpers
+// ---------------------------------------------------------------------------
+
+function setFill(d: jsPDF, [r, g, b]: RGB): void {
+  d.setFillColor(r, g, b);
 }
-function setText(doc: jsPDF, [r, g, b]: RGB): void {
-  doc.setTextColor(r, g, b);
+function setTxt(d: jsPDF, [r, g, b]: RGB): void {
+  d.setTextColor(r, g, b);
 }
-function setDraw(doc: jsPDF, [r, g, b]: RGB): void {
-  doc.setDrawColor(r, g, b);
-}
-function rule(doc: jsPDF, x: number, y: number, w: number, color: RGB = COLORS.rule, weight = 0.25): void {
-  setDraw(doc, color);
-  doc.setLineWidth(weight);
-  doc.line(x, y, x + w, y);
+function setDraw(d: jsPDF, [r, g, b]: RGB): void {
+  d.setDrawColor(r, g, b);
 }
 
-/** Formats a Date to professional local string: "07 Oct 2026, 12:43 PM IST". */
-function formatDateTimeProfessional(date: Date | string): string {
-  const d = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(d.getTime())) return String(date);
+/** Horizontal rule. */
+function hr(d: jsPDF, y: number, color: RGB = C.rule, weight = 0.3): void {
+  setDraw(d, color);
+  d.setLineWidth(weight);
+  d.line(PAGE.contentLeft, y, PAGE.contentRight, y);
+}
+
+/** Format cents → ₹X,XXX.00 (Indian grouping). */
+function inr(cents: number): string {
+  const abs = Math.abs(cents);
+  const n = (abs / 100).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return cents < 0 ? `-₹${n}` : `₹${n}`;
+}
+
+/** Professional timestamp: "07 Oct 2026, 12:43 PM IST". */
+function fmtTimestamp(v: Date | string): string {
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
   return d.toLocaleString('en-IN', {
     day: '2-digit',
     month: 'short',
@@ -76,306 +97,331 @@ function formatDateTimeProfessional(date: Date | string): string {
   });
 }
 
-/** Formats period display: "Oct 1, 2026 → Present (Open)" or "Oct 1, 2026 → Oct 28, 2026 (Closed)". */
-function formatPeriodDisplay(data: RoomExport, meta: RoomExport['metadata']): string {
+/** Period display: "Oct 1, 2026 → Present (Open)" or closed equivalent. */
+function periodDisplay(data: RoomExport, meta: RoomExport['metadata']): string {
   const from = formatDate(data.range.from);
-  const isOpen = meta?.periodStatus === 'OPEN' || (meta?.spansMultiplePeriods && data.range.to >= new Date().toISOString().slice(0, 10));
-  const to = isOpen ? 'Present (Open)' : formatDate(data.range.to);
-  return `${from} → ${to}`;
+  const isOpen =
+    meta?.periodStatus === 'OPEN' ||
+    (meta?.spansMultiplePeriods &&
+      data.range.to >= new Date().toISOString().slice(0, 10));
+  const to = isOpen ? 'Present (Open)' : `${formatDate(data.range.to)} (Closed)`;
+  return `${from}  →  ${to}`;
 }
 
-/** Draws the header band on a page. */
-function drawHeader(doc: jsPDF, _data: RoomExport, statementId: string): void {
-  const bandH = 24;
-  const y = PAGE.contentTop;
+/** Ensures y is within page limits; if not, adds a new page and returns the
+ *  new cursor (below the header). */
+function ensureSpace(
+  doc: jsPDF,
+  y: number,
+  needed: number,
+): number {
+  if (y + needed > PAGE.contentBottom) {
+    doc.addPage();
+    return PAGE.contentTop;
+  }
+  return y;
+}
 
-  setFill(doc, COLORS.navy);
+// ---------------------------------------------------------------------------
+// Section drawers
+// ---------------------------------------------------------------------------
+
+/** Draw the top header band (navy bar with brand + statement title). */
+function drawHeader(doc: jsPDF, statementId: string): number {
+  const y = PAGE.contentTop;
+  const bandH = 22;
+
+  // Navy band
+  setFill(doc, C.navy);
   doc.rect(PAGE.contentLeft, y, PAGE.contentWidth, bandH, 'F');
 
-  setFill(doc, COLORS.navyDark);
-  doc.rect(PAGE.contentLeft, y + bandH - 1.5, PAGE.contentWidth, 1.5, 'F');
-
-  // Brand mark (white square with navy R)
-  setFill(doc, COLORS.white);
-  doc.rect(PAGE.contentLeft + 6, y + 7, 6, 10, 'F');
-  setFill(doc, COLORS.navy);
+  // Brand left
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text('R', PAGE.contentLeft + 6 + 1.5, y + 14.5);
-
-  // Brand text
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  setText(doc, COLORS.white);
-  doc.text('ROOMFUND', PAGE.contentLeft + 16, y + 11);
+  doc.setFontSize(14);
+  setTxt(doc, C.white);
+  doc.text('ROOMFUND', PAGE.contentLeft + 6, y + 9);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.text('Shared Room Expense Tracker', PAGE.contentLeft + 16, y + 17);
+  doc.setFontSize(8);
+  doc.text('Shared Room Expense Tracker', PAGE.contentLeft + 6, y + 15);
 
-  // Right side — statement title + ID
+  // Title right
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text('EXPENSE STATEMENT', PAGE.contentRight - 6, y + 11, { align: 'right' });
+  doc.text('EXPENSE STATEMENT', PAGE.contentRight - 6, y + 9, { align: 'right' });
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
-  doc.text(`Statement ID: ${statementId}`, PAGE.contentRight - 6, y + 17, { align: 'right' });
+  doc.text(`Statement ID: ${statementId}`, PAGE.contentRight - 6, y + 15, {
+    align: 'right',
+  });
+
+  return y + bandH + 6;
 }
 
-/** Draws the account info card (two-column). Returns Y position after the card. */
-function drawAccountInfo(doc: jsPDF, data: RoomExport, startY: number, _statementId: string, meta: RoomExport['metadata']): number {
-  const boxH = 52;
-  const y = startY + 4;
+/** Draw room / period / member / exporter / approval info.  Returns cursor Y. */
+function drawStatementInfo(
+  doc: jsPDF,
+  data: RoomExport,
+  startY: number,
+  meta: RoomExport['metadata'],
+): number {
+  let y = startY;
 
-  setFill(doc, COLORS.cream);
-  doc.roundedRect(PAGE.contentLeft, y, PAGE.contentWidth, boxH, 2, 2, 'F');
-  setDraw(doc, COLORS.rule);
-  doc.setLineWidth(0.25);
-  doc.roundedRect(PAGE.contentLeft, y, PAGE.contentWidth, boxH, 2, 2, 'S');
-
-  // Vertical divider
-  const midX = PAGE.contentLeft + PAGE.contentWidth / 2;
-  setDraw(doc, COLORS.rule);
-  doc.line(midX, y + 6, midX, y + boxH - 6);
-
-  const col1X = PAGE.contentLeft + 8;
-  const col2X = midX + 8;
-  const labelSize = 6.5;
-  const valueSize = 9.5;
-
-  // --- Column 1: Room & Statement Scope ---
+  // --- Section title ---
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(labelSize);
-  setText(doc, COLORS.slate);
-  doc.text('ROOM & CODE', col1X, y + 9);
+  doc.setFontSize(11);
+  setTxt(doc, C.navy);
+  doc.text('STATEMENT INFORMATION', PAGE.contentLeft, y);
+  y += 2;
+  hr(doc, y, C.navy, 0.5);
+  y += 5;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(valueSize);
-  setText(doc, COLORS.navy);
-  doc.text(`${data.room.name} [${data.room.join_code ?? 'CODE'}]`, col1X, y + 16);
+  // Helper to draw a label–value pair
+  const lineH = 4.5;
+  const labelX = PAGE.contentLeft + 1;
+  const valX = PAGE.contentLeft + 42;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(labelSize);
-  setText(doc, COLORS.slate);
-  doc.text('STATEMENT SCOPE / PERIOD', col1X, y + 23);
+  const pair = (label: string, value: string): void => {
+    y = ensureSpace(doc, y, lineH + 1);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    setTxt(doc, C.slate);
+    doc.text(label, labelX, y);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(valueSize);
-  setText(doc, COLORS.charcoal);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    setTxt(doc, C.charcoal);
+    // Wrap long values
+    const maxW = PAGE.contentRight - valX - 2;
+    const lines: string[] = doc.splitTextToSize(value, maxW);
+    doc.text(lines, valX, y);
+    y += lineH * Math.max(lines.length, 1);
+  };
+
+  const code = data.room.join_code ?? '';
+  pair('Room', `${data.room.name}${code ? ` [${code}]` : ''}`);
+
+  // Period name
   const scopeLabel = meta?.periodName
     ? `${meta.periodName} (${meta.periodStatus ?? 'OPEN'})`
     : meta?.spansMultiplePeriods
-      ? 'Custom Date Range (Spans multiple periods)'
+      ? 'Custom Date Range (spans multiple periods)'
       : 'Custom Date Range';
-  doc.text(scopeLabel, col1X, y + 30);
+  pair('Period', scopeLabel);
+  pair('Date Range', periodDisplay(data, meta));
+  pair('Currency', `${data.room.currency} (₹)`);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  setText(doc, COLORS.slate);
-  const periodStr = formatPeriodDisplay(data, meta);
-  doc.text(`Period: ${periodStr}`, col1X, y + 37);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.text(`Currency: ${data.room.currency} (₹)`, col1X, y + 43);
-
-  // --- Column 2: Exporter & Digital Approval ---
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(labelSize);
-  setText(doc, COLORS.slate);
-  doc.text('EXPORTED BY', col2X, y + 9);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(valueSize);
-  setText(doc, COLORS.charcoal);
+  // Exporter
   const exporterName = meta?.exportedBy?.name ?? 'Room Member';
   const exporterRole = meta?.exportedBy?.role ? ` (${meta.exportedBy.role})` : '';
-  doc.text(`${exporterName}${exporterRole}`, col2X, y + 16);
+  pair('Exported By', `${exporterName}${exporterRole}`);
+  pair('Exported On', fmtTimestamp(meta?.exportedAt ?? new Date()));
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(labelSize);
-  setText(doc, COLORS.slate);
-  doc.text('ADMIN DIGITAL APPROVAL STATUS', col2X, y + 23);
-
+  // Approval
+  y += 3;
   const isApproved = meta?.adminApproval?.status === 'DIGITALLY APPROVED';
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(valueSize - 0.5);
-  setText(doc, isApproved ? COLORS.credit : COLORS.gold);
-  doc.text(
-    isApproved ? '✓ DIGITALLY APPROVED BY ROOM ADMIN' : '⏳ PENDING ADMIN APPROVAL',
-    col2X,
-    y + 30
-  );
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  setText(doc, COLORS.charcoal);
   if (isApproved && meta?.adminApproval?.approvedBy) {
-    const approvedAt = meta.adminApproval.approvedAt
-      ? formatDateTimeProfessional(meta.adminApproval.approvedAt)
-      : formatDateTimeProfessional(new Date());
-    // Wrap long approval text if needed
-    const approvalText = `Approved by: ${meta.adminApproval.approvedBy} on ${approvedAt}`;
-    const lines = doc.splitTextToSize(approvalText, PAGE.contentWidth / 2 - 16);
-    doc.text(lines, col2X, y + 36);
-    doc.setFontSize(7);
-    setText(doc, COLORS.slate);
-    doc.text('Status: Digitally approved by room administrator.', col2X, y + 36 + lines.length * 4);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    setTxt(doc, C.slate);
+    doc.text('ADMIN APPROVAL', labelX, y);
+    y += lineH;
+
+    pair('Approved By', meta.adminApproval.approvedBy);
+    pair('Approved On', fmtTimestamp(meta.adminApproval.approvedAt ?? new Date()));
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    setTxt(doc, C.credit);
+    doc.text('✓  DIGITALLY APPROVED', valX, y);
+    y += lineH;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    setTxt(doc, C.slate);
+    doc.text(
+      'Digitally approved by Room Administrator. This is not a cryptographic certificate-based signature.',
+      labelX,
+      y,
+    );
+    y += lineH;
   } else {
-    doc.text('Generated for accounting review.', col2X, y + 36);
-    doc.setFontSize(7);
-    setText(doc, COLORS.slate);
-    doc.text('Status: Pending room administrator digital approval.', col2X, y + 42);
-  }
-
-  return y + boxH;
-}
-
-/** Draws the 5-card financial summary. Returns Y position after the block. */
-function drawBalanceSummary(doc: jsPDF, data: RoomExport, startY: number): number {
-  const blockH = 24;
-  const y = startY + 6;
-
-  setFill(doc, COLORS.navy);
-  doc.roundedRect(PAGE.contentLeft, y, PAGE.contentWidth, blockH, 1.5, 1.5, 'F');
-
-  const credits = data.summary.contributions_cents;
-  const commonExp = data.summary.common_expenses_cents;
-  const personalExp = data.summary.personal_expenses_cents;
-  const reimbursed = data.summary.reimbursed_cents;
-  const available = data.summary.available_cents;
-
-  const cells: Array<{ label: string; amount: string; color: RGB }> = [
-    { label: 'CONTRIBUTIONS', amount: formatCentsPlain(credits), color: COLORS.credit },
-    { label: 'COMMON EXPENSE', amount: formatCentsPlain(commonExp), color: COLORS.debit },
-    { label: 'PERSONAL EXPENSE', amount: formatCentsPlain(personalExp), color: COLORS.white },
-    { label: 'REIMBURSED', amount: formatCentsPlain(reimbursed), color: COLORS.white },
-    { label: 'AVAILABLE FUND', amount: formatCentsPlain(available), color: COLORS.white },
-  ];
-
-  const colW = PAGE.contentWidth / 5;
-  cells.forEach((cell, i) => {
-    const x = PAGE.contentLeft + i * colW;
-
-    if (i > 0) {
-      setDraw(doc, COLORS.navyDark);
-      doc.setLineWidth(0.25);
-      doc.line(x, y + 5, x, y + blockH - 5);
-    }
-
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.5);
-    setText(doc, COLORS.slateLight);
-    doc.text(cell.label, x + 6, y + 9);
+    doc.setFontSize(8.5);
+    setTxt(doc, C.slate);
+    doc.text('ADMIN APPROVAL', labelX, y);
+    y += lineH;
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
-    setText(doc, cell.color);
-    doc.text(cell.amount, x + 6, y + 17);
-  });
-
-  return y + blockH;
-}
-
-/** Draws the Member Activity Summary table. Returns Y position after the table. */
-function drawMemberSummary(doc: jsPDF, data: RoomExport, startY: number): number {
-  type MemberStat = {
-    name: string;
-    contributed: number;
-    personalPaid: number;
-    reimbursed: number;
-  };
-  const map = new Map<string, MemberStat>();
-
-  data.contributions.forEach((c) => {
-    if (c.voided_at) return;
-    const entry = map.get(c.display_name) ?? { name: c.display_name, contributed: 0, personalPaid: 0, reimbursed: 0 };
-    entry.contributed += c.amount_cents;
-    map.set(c.display_name, entry);
-  });
-
-  data.expenses.forEach((e) => {
-    if (e.voided_at) return;
-    const entry = map.get(e.paid_by) ?? { name: e.paid_by, contributed: 0, personalPaid: 0, reimbursed: 0 };
-    if (e.payment_source === 'personal') {
-      entry.personalPaid += e.amount_cents;
-    }
-    if (e.reimbursement_status === 'paid') {
-      entry.reimbursed += e.amount_cents;
-    }
-    map.set(e.paid_by, entry);
-  });
-
-  const members = [...map.values()];
-  if (members.length === 0) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    setText(doc, COLORS.slate);
-    doc.text('No member activity recorded.', PAGE.contentLeft, startY + 6);
-    return startY + 14;
+    setTxt(doc, C.charcoal);
+    doc.text('Pending admin approval.', valX, y);
+    y += lineH;
   }
+
+  return y + 2;
+}
+
+/** Draw the financial summary block. Returns cursor Y. */
+function drawFinancialSummary(doc: jsPDF, data: RoomExport, startY: number): number {
+  let y = ensureSpace(doc, startY, 50);
 
   // Section title
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  setText(doc, COLORS.navy);
-  doc.text('MEMBER ACTIVITY SUMMARY', PAGE.contentLeft, startY);
-  rule(doc, PAGE.contentLeft, startY + 2, PAGE.contentWidth, COLORS.navy, 0.5);
+  setTxt(doc, C.navy);
+  doc.text('FINANCIAL SUMMARY', PAGE.contentLeft, y);
+  y += 2;
+  hr(doc, y, C.navy, 0.5);
+  y += 6;
 
-  const head = [['Member', 'Total Contributed', 'Personal Paid', 'Total Reimbursed']];
+  const s = data.summary;
+
+  const items: Array<{ label: string; amount: string; color: RGB }> = [
+    { label: 'Total Contributions', amount: inr(s.contributions_cents), color: C.credit },
+    { label: 'Common Expenses', amount: inr(s.common_expenses_cents), color: C.debit },
+    { label: 'Personal Expenses', amount: inr(s.personal_expenses_cents), color: C.debit },
+    { label: 'Reimbursed', amount: inr(s.reimbursed_cents), color: C.charcoal },
+    { label: 'Available Fund', amount: inr(s.available_cents), color: C.credit },
+  ];
+
+  const labelX = PAGE.contentLeft + 4;
+  const amountX = PAGE.contentLeft + PAGE.contentWidth / 2 - 4;
+  const lineH = 6;
+
+  // Light background card
+  const cardH = items.length * lineH + 6;
+  setFill(doc, C.bg);
+  setDraw(doc, C.rule);
+  doc.setLineWidth(0.2);
+  doc.roundedRect(PAGE.contentLeft, y - 3, PAGE.contentWidth, cardH, 1.5, 1.5, 'FD');
+
+  items.forEach((item) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    setTxt(doc, C.body);
+    doc.text(item.label, labelX, y + 1);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    setTxt(doc, item.color);
+    doc.text(item.amount, amountX, y + 1, { align: 'right' });
+
+    y += lineH;
+  });
+
+  return y + 6;
+}
+
+/** Draw member activity summary table. Returns cursor Y. */
+function drawMemberSummary(doc: jsPDF, data: RoomExport, startY: number): number {
+  // Build member stats from data (same logic as before — no accounting change)
+  type Stat = { name: string; contributed: number; personalPaid: number; reimbursed: number };
+  const map = new Map<string, Stat>();
+
+  data.contributions.forEach((c) => {
+    if (c.voided_at) return;
+    const e = map.get(c.display_name) ?? {
+      name: c.display_name,
+      contributed: 0,
+      personalPaid: 0,
+      reimbursed: 0,
+    };
+    e.contributed += c.amount_cents;
+    map.set(c.display_name, e);
+  });
+
+  data.expenses.forEach((ex) => {
+    if (ex.voided_at) return;
+    const e = map.get(ex.paid_by) ?? {
+      name: ex.paid_by,
+      contributed: 0,
+      personalPaid: 0,
+      reimbursed: 0,
+    };
+    if (ex.payment_source === 'personal') {
+      e.personalPaid += ex.amount_cents;
+    }
+    if (ex.reimbursement_status === 'paid') {
+      e.reimbursed += ex.amount_cents;
+    }
+    map.set(ex.paid_by, e);
+  });
+
+  const members = [...map.values()];
+
+  let y = ensureSpace(doc, startY, 30);
+
+  // Section title
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  setTxt(doc, C.navy);
+  doc.text('MEMBER EXPENSE SUMMARY', PAGE.contentLeft, y);
+  y += 2;
+  hr(doc, y, C.navy, 0.5);
+  y += 4;
+
+  if (members.length === 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    setTxt(doc, C.slate);
+    doc.text('No member activity recorded for this period.', PAGE.contentLeft, y + 4);
+    return y + 12;
+  }
+
+  const head = [['Member', 'Contributed', 'Personal Spent', 'Reimbursed']];
   const body = members.map((m) => [
     m.name,
-    formatCentsPlain(m.contributed),
-    formatCentsPlain(m.personalPaid),
-    formatCentsPlain(m.reimbursed),
+    inr(m.contributed),
+    inr(m.personalPaid),
+    inr(m.reimbursed),
   ]);
 
   autoTable(doc, {
-    startY: startY + 5,
-    margin: { left: PAGE.margin, right: PAGE.margin },
+    startY: y,
+    margin: { left: PAGE.margin, right: PAGE.margin, bottom: PAGE.footerZone + PAGE.margin },
     head,
     body,
     theme: 'grid',
     styles: {
       font: 'helvetica',
       fontSize: 9,
-      cellPadding: 3.5,
-      textColor: COLORS.charcoal,
-      lineColor: COLORS.rule,
+      cellPadding: 3,
+      textColor: C.body,
+      lineColor: C.rule,
       lineWidth: 0.15,
       minCellHeight: 7,
     },
     headStyles: {
-      fillColor: COLORS.navy,
-      textColor: COLORS.white,
+      fillColor: C.navy,
+      textColor: C.white,
       fontStyle: 'bold',
-      fontSize: 9,
-      cellPadding: 4,
+      fontSize: 8.5,
+      cellPadding: 3.5,
     },
-    alternateRowStyles: { fillColor: COLORS.rowAlt },
+    alternateRowStyles: { fillColor: C.rowAlt },
     columnStyles: {
       0: { cellWidth: 'auto', fontStyle: 'bold', minCellWidth: 30 },
-      1: { cellWidth: 38, halign: 'right', textColor: COLORS.credit, fontStyle: 'bold' },
-      2: { cellWidth: 38, halign: 'right' },
-      3: { cellWidth: 38, halign: 'right' },
+      1: { cellWidth: 35, halign: 'right', textColor: C.credit, fontStyle: 'bold' },
+      2: { cellWidth: 35, halign: 'right' },
+      3: { cellWidth: 35, halign: 'right' },
     },
     showHead: 'everyPage',
-    // Don't draw footer here - we'll do it in a second pass
   });
 
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 }
 
-/** Draws the Transaction Ledger table. Returns Y position after the table. */
-function drawTransactionHistory(doc: jsPDF, data: RoomExport, startY: number): number {
+/** Draw transaction ledger table. Returns cursor Y. */
+function drawLedger(doc: jsPDF, data: RoomExport, startY: number): number {
   type Row = {
     date: string;
     type: string;
-    narration: string;
+    description: string;
     member: string;
-    credit: number;
-    debit: number;
+    amount: number;
+    isCredit: boolean;
     status: string;
   };
 
@@ -385,144 +431,242 @@ function drawTransactionHistory(doc: jsPDF, data: RoomExport, startY: number): n
     if (c.voided_at) return;
     rows.push({
       date: c.contributed_on,
-      type: 'Contribution',
-      narration: c.note ? `Contribution — ${c.note}` : 'Contribution to common fund',
+      type: 'CONTRIBUTION',
+      description: c.note ? `Contribution — ${c.note}` : 'Contribution',
       member: c.display_name,
-      credit: c.amount_cents,
-      debit: 0,
+      amount: c.amount_cents,
+      isCredit: true,
       status: c.method ? `Paid (${c.method})` : 'Completed',
     });
   });
 
-  data.expenses.forEach((e) => {
-    if (e.voided_at) return;
-    const cat = resolveCategory(e.category);
-    const reimbStr = e.reimbursement_status
-      ? e.reimbursement_status.toUpperCase()
+  data.expenses.forEach((ex) => {
+    if (ex.voided_at) return;
+    const cat = resolveCategory(ex.category);
+    const reimbStr = ex.reimbursement_status
+      ? ex.reimbursement_status.charAt(0).toUpperCase() + ex.reimbursement_status.slice(1)
       : 'N/A';
     rows.push({
-      date: e.spent_on,
-      type: `${e.payment_source.toUpperCase()} (${cat.name})`,
-      narration: e.note ? `${e.description} — ${e.note}` : e.description,
-      member: e.paid_by,
-      credit: 0,
-      debit: e.amount_cents,
-      status: e.payment_source === 'personal' ? `Reimb: ${reimbStr}` : 'Common Fund Spent',
+      date: ex.spent_on,
+      type: ex.payment_source.toUpperCase(),
+      description: ex.note
+        ? `${cat.name}\n${ex.description} — ${ex.note}`
+        : `${cat.name}\n${ex.description}`,
+      member: ex.paid_by,
+      amount: ex.amount_cents,
+      isCredit: false,
+      status:
+        ex.payment_source === 'personal'
+          ? `Reimb: ${reimbStr}`
+          : 'Common Fund',
     });
   });
 
   rows.sort((a, b) => a.date.localeCompare(b.date));
 
+  let y = ensureSpace(doc, startY, 30);
+
   // Section title
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  setText(doc, COLORS.navy);
-  doc.text('TRANSACTION LEDGER', PAGE.contentLeft, startY);
-  rule(doc, PAGE.contentLeft, startY + 2, PAGE.contentWidth, COLORS.navy, 0.5);
+  setTxt(doc, C.navy);
+  doc.text('EXPENSE & TRANSACTION LEDGER', PAGE.contentLeft, y);
+  y += 2;
+  hr(doc, y, C.navy, 0.5);
+  y += 4;
 
   if (rows.length === 0) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    setText(doc, COLORS.slate);
-    doc.text('No active transactions recorded for this period.', PAGE.contentLeft, startY + 10);
-    return startY + 16;
+    setTxt(doc, C.slate);
+    doc.text('No transactions recorded for this period.', PAGE.contentLeft, y + 4);
+    return y + 12;
   }
 
-  const head = [['#', 'Date', 'Type & Description', 'Paid By', 'Credit', 'Debit', 'Status']];
-  const body = rows.map((row, i) => [
-    String(i + 1),
-    formatDate(row.date),
-    `${row.type}\n${row.narration}`,
-    row.member,
-    row.credit ? formatCentsPlain(row.credit) : '—',
-    row.debit ? formatCentsPlain(row.debit) : '—',
-    row.status,
-  ]);
-
-  // Calculate column widths proportionally
-  const totalW = PAGE.contentWidth;
-  const colWidths = {
-    0: totalW * 0.055,  // #
-    1: totalW * 0.11,   // Date
-    2: totalW * 0.33,   // Type & Description
-    3: totalW * 0.125,  // Paid By
-    4: totalW * 0.125,  // Credit
-    5: totalW * 0.125,  // Debit
-    6: totalW * 0.13,   // Status
+  // Column widths proportional to content width
+  const W = PAGE.contentWidth;
+  const cw = {
+    0: W * 0.05,   // #
+    1: W * 0.12,   // Date
+    2: W * 0.13,   // Type
+    3: W * 0.30,   // Description
+    4: W * 0.13,   // Paid By
+    5: W * 0.14,   // Amount
+    6: W * 0.13,   // Status
   };
 
+  const head = [['#', 'Date', 'Type', 'Description', 'Paid By', 'Amount', 'Status']];
+  const body = rows.map((r, i) => [
+    String(i + 1),
+    formatDate(r.date),
+    r.type,
+    r.description,
+    r.member,
+    inr(r.amount),
+    r.status,
+  ]);
+
+  // The top margin for continuation pages must leave room for the header band
+  // that we draw in the second pass (22mm band + 6mm gap = 28mm from top).
+  const continuationTopMargin = PAGE.margin + 28;
+
   autoTable(doc, {
-    startY: startY + 5,
-    margin: { left: PAGE.margin, right: PAGE.margin },
+    startY: y,
+    margin: {
+      left: PAGE.margin,
+      right: PAGE.margin,
+      top: continuationTopMargin,
+      bottom: PAGE.footerZone + PAGE.margin,
+    },
     head,
     body,
     theme: 'grid',
     styles: {
       font: 'helvetica',
       fontSize: 8.5,
-      cellPadding: 3,
-      textColor: COLORS.charcoal,
-      lineColor: COLORS.rule,
+      cellPadding: 2.8,
+      textColor: C.body,
+      lineColor: C.rule,
       lineWidth: 0.15,
       minCellHeight: 7,
       overflow: 'linebreak',
     },
     headStyles: {
-      fillColor: COLORS.navy,
-      textColor: COLORS.white,
+      fillColor: C.navy,
+      textColor: C.white,
       fontStyle: 'bold',
       fontSize: 8.5,
-      cellPadding: 4,
+      cellPadding: 3.5,
       halign: 'center',
     },
-    alternateRowStyles: { fillColor: COLORS.rowAlt },
+    alternateRowStyles: { fillColor: C.rowAlt },
     columnStyles: {
-      0: { cellWidth: colWidths[0], halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: colWidths[1], halign: 'center' },
-      2: { cellWidth: colWidths[2], halign: 'left', cellPadding: { left: 4, right: 4, top: 3, bottom: 3 } },
-      3: { cellWidth: colWidths[3], halign: 'left' },
-      4: { cellWidth: colWidths[4], halign: 'right', textColor: COLORS.credit, fontStyle: 'bold' },
-      5: { cellWidth: colWidths[5], halign: 'right', textColor: COLORS.debit, fontStyle: 'bold' },
-      6: { cellWidth: colWidths[6], halign: 'center', fontSize: 7.5 },
+      0: { cellWidth: cw[0], halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: cw[1], halign: 'center' },
+      2: { cellWidth: cw[2], halign: 'left', fontStyle: 'bold', fontSize: 8 },
+      3: { cellWidth: cw[3], halign: 'left' },
+      4: { cellWidth: cw[4], halign: 'left' },
+      5: { cellWidth: cw[5], halign: 'right', fontStyle: 'bold' },
+      6: { cellWidth: cw[6], halign: 'center', fontSize: 8 },
     },
-    // Ensure header repeats on each page
+    // Color credit/debit amounts per-row
+    didParseCell(hookData) {
+      if (hookData.section === 'body' && hookData.column.index === 5) {
+        const rowIdx = hookData.row.index;
+        const row = rows[rowIdx];
+        if (row) {
+          hookData.cell.styles.textColor = row.isCredit ? C.credit : C.debit;
+        }
+      }
+    },
     showHead: 'everyPage',
   });
 
   return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
 }
 
-/** Draws footer on a specific page (called in second pass). */
-function drawFooter(doc: jsPDF, _data: RoomExport, page: number, totalPages: number, statementId: string, meta: RoomExport['metadata']): void {
-  const footerH = 16;
-  const y = PAGE.height - PAGE.margin - footerH + 4;
+/** Draw ledger totals below the transaction table. */
+function drawLedgerTotals(doc: jsPDF, data: RoomExport, startY: number): number {
+  let y = ensureSpace(doc, startY + 3, 25);
+
+  hr(doc, y, C.navy, 0.4);
+  y += 5;
+
+  const labelX = PAGE.contentRight - 80;
+  const valX = PAGE.contentRight - 6;
+  const lineH = 5.5;
+
+  const totals: Array<{ label: string; value: string; color: RGB; bold: boolean }> = [
+    {
+      label: 'Total Contributions',
+      value: inr(data.summary.contributions_cents),
+      color: C.credit,
+      bold: true,
+    },
+    {
+      label: 'Total Expenses',
+      value: inr(data.summary.common_expenses_cents + data.summary.personal_expenses_cents),
+      color: C.debit,
+      bold: true,
+    },
+    {
+      label: 'Available Fund',
+      value: inr(data.summary.available_cents),
+      color: C.credit,
+      bold: true,
+    },
+  ];
+
+  totals.forEach((t) => {
+    doc.setFont('helvetica', t.bold ? 'bold' : 'normal');
+    doc.setFontSize(9.5);
+    setTxt(doc, C.charcoal);
+    doc.text(t.label, labelX, y, { align: 'right' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    setTxt(doc, t.color);
+    doc.text(t.value, valX, y, { align: 'right' });
+    y += lineH;
+  });
+
+  return y + 2;
+}
+
+/** Draw the page footer. Called in second pass for every page. */
+function drawFooter(
+  doc: jsPDF,
+  page: number,
+  totalPages: number,
+  statementId: string,
+  roomName: string,
+  exporterName: string,
+): void {
+  const footY = PAGE.height - PAGE.margin - PAGE.footerZone + 4;
 
   // Thin top rule
-  setDraw(doc, COLORS.navy);
-  doc.setLineWidth(0.3);
-  doc.line(PAGE.contentLeft, y - 2, PAGE.contentRight, y - 2);
+  setDraw(doc, C.navy);
+  doc.setLineWidth(0.25);
+  doc.line(PAGE.contentLeft, footY - 2, PAGE.contentRight, footY - 2);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  setText(doc, COLORS.slate);
+  doc.setFontSize(7.5);
+  setTxt(doc, C.slate);
 
-  const exporterName = meta?.exportedBy?.name ?? 'Member';
+  // Left: brand + statement
+  doc.text(
+    `RoomFund · ${roomName}  ·  Statement ID: ${statementId}`,
+    PAGE.contentLeft,
+    footY + 2,
+  );
+  doc.text(
+    `Exported by: ${exporterName}`,
+    PAGE.contentLeft,
+    footY + 6,
+  );
 
-  // Left side
-  doc.text(`RoomFund · Statement ${statementId} · Exported by: ${exporterName}`, PAGE.contentLeft + 2, y + 3);
-  doc.text(`Note: This document provides a financial transaction record and does not constitute a cryptographic certificate-based digital signature.`, PAGE.contentLeft + 2, y + 8);
-
-  // Right side
+  // Right: page number
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  setText(doc, COLORS.navy);
-  doc.text(`Page ${page} of ${totalPages}`, PAGE.contentRight - 2, y + 3, { align: 'right' });
+  setTxt(doc, C.navy);
+  doc.text(`Page ${page} of ${totalPages}`, PAGE.contentRight, footY + 2, {
+    align: 'right',
+  });
 
+  // Bottom disclaimer
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6.5);
-  setText(doc, COLORS.slate);
-  doc.text(`Generated: ${formatDateTimeProfessional(new Date())}`, PAGE.contentRight - 2, y + 8, { align: 'right' });
+  setTxt(doc, C.slate);
+  doc.text(
+    'Financial transaction record generated by RoomFund. This does not constitute a cryptographic certificate-based digital signature.',
+    PAGE.contentLeft,
+    footY + 12,
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Public API — signatures unchanged
+// ---------------------------------------------------------------------------
 
 /** Builds the professional expense PDF statement with proper pagination. */
 export function buildRoomExpensesPdf(data: RoomExport): Blob {
@@ -530,37 +674,38 @@ export function buildRoomExpensesPdf(data: RoomExport): Blob {
 
   const meta = data.metadata;
   const code = data.room.join_code ?? data.room.id.slice(0, 8).toUpperCase();
-  const statementId = meta?.statementId ?? `RF-${code}-${data.range.from.replace(/-/g, '')}`;
+  const statementId =
+    meta?.statementId ?? `RF-${code}-${data.range.from.replace(/-/g, '')}`;
 
-  // --- Page 1: Header, Account Info, Balance Summary, Member Summary ---
-  let y = PAGE.contentTop;
-
-  drawHeader(doc, data, statementId);
-  y = drawAccountInfo(doc, data, y + 2, statementId, meta);
-  y = drawBalanceSummary(doc, data, y);
+  // ── Page 1 ────────────────────────────────────────────────────────────────
+  let y = drawHeader(doc, statementId);
+  y = drawStatementInfo(doc, data, y, meta);
+  y = drawFinancialSummary(doc, data, y);
   y = drawMemberSummary(doc, data, y);
 
-  // If there's not enough space for at least 3 transaction rows, start new page
-  const minSpaceNeeded = 35;
-  if (y > PAGE.contentBottom - minSpaceNeeded) {
+  // Leave a gap before the ledger; start a new page if insufficient space
+  y += 6;
+  if (y > PAGE.contentBottom - 35) {
     doc.addPage();
-    y = PAGE.contentTop;
-    drawHeader(doc, data, statementId);
-  } else {
-    y += 4;
+    y = PAGE.contentTop + 28; // room for the header drawn in second pass
   }
 
-  // --- Transaction Ledger (may span multiple pages) ---
-  drawTransactionHistory(doc, data, y);
+  // ── Ledger (may span multiple pages) ──────────────────────────────────────
+  y = drawLedger(doc, data, y);
+  y = drawLedgerTotals(doc, data, y);
 
-  // --- Second pass: draw headers (on continuation pages) and footers on all pages ---
+  // ── Second pass: header + footer on every page ────────────────────────────
   const totalPages = doc.getNumberOfPages();
+  const roomName = data.room.name;
+  const exporterName = meta?.exportedBy?.name ?? 'Member';
+
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
+    // Draw header on continuation pages (page 1 already has it)
     if (p > 1) {
-      drawHeader(doc, data, statementId);
+      drawHeader(doc, statementId);
     }
-    drawFooter(doc, data, p, totalPages, statementId, meta);
+    drawFooter(doc, p, totalPages, statementId, roomName, exporterName);
   }
 
   return doc.output('blob');
@@ -571,7 +716,7 @@ export function pdfExportFilename(
   roomName: string,
   startsOn: string,
   endsOn: string,
-  periodName?: string
+  periodName?: string,
 ): string {
   const slug =
     roomName
